@@ -492,7 +492,30 @@ async def post_init(app):
     # watcher chi start khi user bam nut - khong block init
     print("[+] post_init ok")
 
+def _health_server():
+    """HTTP server bind PORT cho Render health check - chay nen"""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import threading
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"A1ZTUS BYPASS alive")
+        def do_HEAD(self):
+            self.send_response(200); self.end_headers()
+        def log_message(self, *a): pass
+    port = int(os.environ.get("PORT", 8080))
+    try:
+        srv = HTTPServer(("0.0.0.0", port), H)
+        print(f"[*] health server bind :{port}")
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+    except Exception as e:
+        print(f"[!] health server: {e}")
+
 def main():
+    _health_server()
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
     conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_start, pattern="^add$")],
@@ -521,22 +544,8 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_del_list, pattern="^del_list$"))
     app.add_handler(CallbackQueryHandler(cb_del, pattern=r"^del:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    PORT = int(os.environ.get("PORT", 8080))
-    URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
-    TOKEN_PATH = BOT_TOKEN.replace(":", "_")
-    if URL:
-        # Render cap PORT, phai bind de health check pass
-        print(f"[*] webhook mode port={PORT} url={URL}")
-        app.run_webhook(
-            listen="0.0.0.0", port=PORT,
-            url_path=TOKEN_PATH,
-            webhook_url=f"{URL}/{TOKEN_PATH}",
-            drop_pending_updates=True,
-            secret_token="a1ztus_" + BOT_TOKEN[-8:]
-        )
-    else:
-        print("[*] polling mode")
-        app.run_polling(drop_pending_updates=True, close_loop=False)
+    print("[*] polling mode + health server")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
