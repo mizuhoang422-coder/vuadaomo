@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.vdm/
+/tmp/
+*.session
+.env
