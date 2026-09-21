@@ -521,8 +521,22 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_del_list, pattern="^del_list$"))
     app.add_handler(CallbackQueryHandler(cb_del, pattern=r"^del:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    print("[*] polling mode")
-    app.run_polling(drop_pending_updates=True, close_loop=False)
+    PORT = int(os.environ.get("PORT", 8080))
+    URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    TOKEN_PATH = BOT_TOKEN.replace(":", "_")
+    if URL:
+        # Render cap PORT, phai bind de health check pass
+        print(f"[*] webhook mode port={PORT} url={URL}")
+        app.run_webhook(
+            listen="0.0.0.0", port=PORT,
+            url_path=TOKEN_PATH,
+            webhook_url=f"{URL}/{TOKEN_PATH}",
+            drop_pending_updates=True,
+            secret_token="a1ztus_" + BOT_TOKEN[-8:]
+        )
+    else:
+        print("[*] polling mode")
+        app.run_polling(drop_pending_updates=True, close_loop=False)
 
 if __name__ == "__main__":
     main()
