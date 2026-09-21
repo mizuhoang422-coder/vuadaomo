@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-# vuadaomo.py - A1ZTUS BYPASS bot
-import os, json, re, time, threading, asyncio, urllib.parse
+"""vuadaomo.py - A1ZTUS BYPASS bot"""
+import os, sys, json, re, time, threading, asyncio, urllib.parse
 from pathlib import Path
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
@@ -12,228 +14,236 @@ from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
 import requests
 
+# ===== CONFIG =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-if not BOT_TOKEN: raise SystemExit("BOT_TOKEN env missing")
-API_ID = int(os.environ.get("API_ID", "0"))
-if not API_ID: raise SystemExit("API_ID env missing")
+if not BOT_TOKEN: sys.exit("BOT_TOKEN env missing")
+try: API_ID = int(os.environ.get("API_ID", "0"))
+except: sys.exit("API_ID invalid")
 API_HASH = os.environ.get("API_HASH")
-if not API_HASH: raise SystemExit("API_HASH env missing")
-ALLOWED = [int(x) for x in os.environ.get("ALLOWED_USERS", "").split(",") if x.strip()]
+if not API_HASH: sys.exit("API_HASH env missing")
+ADMINS = [int(x) for x in os.environ.get("ALLOWED_USERS", "").split(",") if x.strip()]
 BASE = "https://vdm.builderminiapp.online"
 BOT_USER = "Vua_dau_mo_bot"
 CHANNEL = "tinggg999"
 MIN_EX = 100000
 TTL = 12 * 3600
-DD = Path(os.environ.get("DATA_DIR", "/tmp/vdm_bot")); DD.mkdir(parents=True, exist_ok=True)
-AF = DD / "accs.json"; CF = DD / "codes.json"
-LK = threading.Lock()
-HDR = {"User-Agent": "Mozilla/5.0 (Linux; Android 13)", "Origin": "https://web.telegram.org",
-       "Referer": "https://web.telegram.org/", "Content-Type": "application/json",
-       "Accept": "application/json, */*"}
-BANNER = ("A1ZTUS BYPASS\n"
-          "v4.0 · bot edition\n"
-          "-------------------------")
-PHOTO = "https://i.ibb.co/FqJY2BpV/Photoroom-20260907-183658676-2.png"
+FURINA = "https://i.ibb.co/FqJY2BpV/Photoroom-20260907-183658676-2.png"
+GIF_URL = os.environ.get("GIF_URL", "").strip()
+DATA_DIR = Path(os.environ.get("DATA_DIR", "/tmp/vdm_bot"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+ACC_FILE = DATA_DIR / "accs.json"
+CODE_FILE = DATA_DIR / "codes.json"
 
-def lj(p, d):
+HEADERS = {"User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36",
+    "Origin": "https://web.telegram.org", "Referer": "https://web.telegram.org/",
+    "Content-Type": "application/json", "Accept": "application/json, */*"}
+
+# ===== STORAGE =====
+_lock = threading.Lock()
+def _load(p, d):
     if p.exists():
         try: return json.loads(p.read_text())
         except: pass
     return d
-
-def sj(p, d):
-    with LK: p.write_text(json.dumps(d, indent=2, ensure_ascii=False))
-
-A = lj(AF, {}); UC = set(lj(CF, []))
-PEND = {}; PWD = {}
-WORKERS = {}; STOP = {}
+def _save(p, v):
+    with _lock: p.write_text(json.dumps(v, indent=2, ensure_ascii=False))
+ACCS = _load(ACC_FILE, {})
+USED = set(_load(CODE_FILE, []))
+PEND = {}
+WD_WAIT = {}
+WORKERS = {}
+STOP = {}
 WATCH = None
 
-def ok(u): return not ALLOWED or u in ALLOWED
-
-def fx(x, p=2):
-    try: return f"{float(x):,.{p}f}"
+# ===== UTILS =====
+def is_admin(uid): return uid in ADMINS if ADMINS else False
+def is_owner(uid, name):
+    a = ACCS.get(name, {})
+    return a.get("owner") == uid or is_admin(uid)
+def user_accs(uid):
+    if is_admin(uid): return list(ACCS.keys())
+    return [n for n, a in ACCS.items() if a.get("owner") == uid]
+def fmt(x, p=2):
+    try: return "{:,.{}f}".format(float(x), p)
     except: return str(x)
-
-def api(name, ep, x=None, t=12):
-    a = A.get(name)
+def api(name, ep, extra=None, timeout=12):
+    a = ACCS.get(name)
     if not a: return None
     idata = a.get("init_data")
     if not idata: return None
-    b = {"initData": idata}
-    if x: b.update(x)
-    try:
-        return requests.post(BASE + ep, headers=HDR, json=b, timeout=t)
+    body = {"initData": idata}
+    if extra: body.update(extra)
+    try: return requests.post(BASE + ep, headers=HEADERS, json=body, timeout=timeout)
     except Exception as e:
-        print(f"[api {name}] {e}")
-        return None
+        print("[api " + name + "] " + str(e)); return None
+def parse_wait(msg):
+    if not msg: return 30
+    m = re.search(r"(\d+)\s*ph[uú]t", msg)
+    if m: return int(m.group(1)) * 60 + 5
+    m = re.search(r"(\d+)\s*gi[aâ]y", msg)
+    if m: return int(m.group(1)) + 2
+    if "quá nhanh" in msg or "quá nhiều" in msg: return 30
+    return 60
 
-async def fetch_id(sess):
-    c = TelegramClient(StringSession(sess), API_ID, API_HASH)
-    await c.connect()
+# ===== MTPROTO =====
+async def fetch_initdata(sess_str):
+    client = TelegramClient(StringSession(sess_str), API_ID, API_HASH)
+    await client.connect()
     try:
-        if not await c.is_user_authorized(): return None
-        bot = await c.get_entity(BOT_USER)
-        for pl in ("android", "web", "ios"):
+        if not await client.is_user_authorized(): return None
+        bot = await client.get_entity(BOT_USER)
+        for platform in ("android", "web", "ios"):
             try:
-                res = await c(functions.messages.RequestWebViewRequest(peer=bot, bot=bot, platform=pl,
+                res = await client(functions.messages.RequestWebViewRequest(
+                    peer=bot, bot=bot, platform=platform,
                     url=BASE + "/", from_bot_menu=False))
-                u = res.url
-                if "#tgWebAppData=" in u:
-                    fr = u.split("#tgWebAppData=", 1)[1]
-                    raw = re.split(r"&tgWebAppVersion|&tgWebAppPlatform|&tgWebAppThemeParams", fr)[0]
+                url = res.url
+                if "#tgWebAppData=" in url:
+                    frag = url.split("#tgWebAppData=", 1)[1]
+                    raw = re.split(r"&tgWebAppVersion|&tgWebAppPlatform|&tgWebAppThemeParams", frag)[0]
                     return urllib.parse.unquote(raw)
-                if "tgWebAppData=" in u:
-                    fr = u.split("tgWebAppData=", 1)[1]
-                    return urllib.parse.unquote(fr.split("&")[0])
+                if "tgWebAppData=" in url:
+                    frag = url.split("tgWebAppData=", 1)[1]
+                    return urllib.parse.unquote(frag.split("&")[0])
             except: pass
         return None
     finally:
-        try: await c.disconnect()
+        try: await client.disconnect()
         except: pass
-
-async def refresh(name):
-    a = A.get(name)
+async def refresh_idata(name):
+    a = ACCS.get(name)
     if not a: return False
     try:
-        f = await fetch_id(a["session_string"])
-        if f:
-            a["init_data"] = f; a["init_ts"] = time.time()
-            sj(AF, A)
-            return True
-    except Exception as e:
-        print(f"[refresh {name}] {e}")
+        fresh = await fetch_initdata(a["session_string"])
+        if fresh:
+            a["init_data"] = fresh; a["init_ts"] = time.time()
+            _save(ACC_FILE, ACCS); return True
+    except Exception as e: print("[refresh " + name + "] " + str(e))
     return False
 
-def parse_wait(m):
-    if not m: return 30
-    x = re.search(r"(\d+)\s*ph[uú]t", m)
-    if x: return int(x.group(1)) * 60 + 5
-    x = re.search(r"(\d+)\s*gi[aâ]y", m)
-    if x: return int(x.group(1)) + 2
-    if "quá nhanh" in m or "quá nhiều" in m: return 30
-    return 60
-
-async def task(name, tk, ep, b=None, ck=None, cs=0):
-    a = A.get(name)
+# ===== FARM =====
+async def do_task(name, task, ep, extra=None, cd_key=None, cd_secs=0):
+    a = ACCS.get(name)
     if not a: return None
     cd = a.setdefault("cd", {})
     now = time.time()
-    if ck and cd.get(ck, 0) > now: return None
-    r = await asyncio.to_thread(api, name, ep, b)
+    if cd_key and cd.get(cd_key, 0) > now: return None
+    r = await asyncio.to_thread(api, name, ep, extra)
     if not r: return None
     try: j = r.json()
     except: return None
     if j.get("success"):
-        st = a.setdefault("stats", {}); st[tk] = st.get(tk, 0) + 1
-        if cs: cd[ck or tk] = now + cs
-        sj(AF, A)
-        return j
-    m = j.get("error") or j.get("message") or ""
-    if m: cd[ck or tk] = now + parse_wait(m)
+        st = a.setdefault("stats", {})
+        st[task] = st.get(task, 0) + 1
+        if cd_secs: cd[cd_key or task] = now + cd_secs
+        _save(ACC_FILE, ACCS); return j
+    msg = j.get("error") or j.get("message") or ""
+    if msg: cd[cd_key or task] = now + parse_wait(msg)
     return None
-
-async def farm_loop(name, app):
+async def farm_loop(name):
     ev = STOP[name]
-    if not A[name].get("init_data"): await refresh(name)
+    if not ACCS[name].get("init_data"): await refresh_idata(name)
     while not ev.is_set():
         try:
-            a = A.get(name)
+            a = ACCS.get(name)
             if not a: break
-            if time.time() - a.get("init_ts", 0) > TTL: await refresh(name)
+            if time.time() - a.get("init_ts", 0) > TTL: await refresh_idata(name)
             r = await asyncio.to_thread(api, name, "/api/login")
             if not r or r.status_code != 200:
                 await asyncio.sleep(30); continue
             try: u = r.json().get("user", {}); a["user"] = u
             except: u = a.get("user", {})
-            oil = u.get("oil_balance", 0); f = a.get("flags", {})
+            oil = u.get("oil_balance", 0)
+            f = a.get("flags", {})
             if f.get("mine") and not u.get("is_mining"):
-                await task(name, "mine", "/api/start-mine", ck="mine", cs=30)
-            if f.get("claim"): await task(name, "claim", "/api/claim", ck="claim", cs=45)
-            if f.get("watch"): await task(name, "watch", "/api/watch-video", ck="watch", cs=15 * 60 + 10)
+                await do_task(name, "mine", "/api/start-mine", cd_key="mine", cd_secs=30)
+            if f.get("claim"): await do_task(name, "claim", "/api/claim", cd_key="claim", cd_secs=45)
+            if f.get("watch"): await do_task(name, "watch", "/api/watch-video", cd_key="watch", cd_secs=15*60+10)
             if f.get("box") and u.get("mystery_boxes", 0) > 0:
-                await task(name, "box", "/api/open-box-all", ck="box", cs=5)
+                await do_task(name, "box", "/api/open-box-all", cd_key="box", cd_secs=5)
             if f.get("craft") and u.get("shards", 0) >= 10 and u.get("tickets", 0) < 50:
-                await task(name, "craft", "/api/craft-ticket", ck="craft", cs=3)
+                await do_task(name, "craft", "/api/craft-ticket", cd_key="craft", cd_secs=3)
             if f.get("spin") and u.get("tickets", 0) > 0:
-                await task(name, "spin", "/api/spin", ck="spin", cs=4)
+                await do_task(name, "spin", "/api/spin", cd_key="spin", cd_secs=4)
             if f.get("exchange") and oil >= MIN_EX:
-                await task(name, "exchange", "/api/exchange", b={"oilAmount": MIN_EX}, ck="exchange", cs=10)
+                await do_task(name, "exchange", "/api/exchange", extra={"oilAmount": MIN_EX}, cd_key="exchange", cd_secs=10)
             if f.get("upgrade") and oil >= 50000:
                 for t in ("speed", "capacity"):
-                    j = await task(name, "upgrade", "/api/upgrade", b={"type": t}, ck=f"upg_{t}", cs=15)
+                    j = await do_task(name, "upgrade", "/api/upgrade", extra={"type": t}, cd_key="upg_" + t, cd_secs=15)
                     if j: break
             await asyncio.sleep(20)
         except asyncio.CancelledError: break
-        except Exception as e:
-            print(f"[farm {name}] {e}")
-            await asyncio.sleep(20)
+        except Exception as e: print("[farm " + name + "] " + str(e)); await asyncio.sleep(20)
     WORKERS.pop(name, None)
-
 def start_farm(app, name):
     if name in WORKERS and not WORKERS[name].done(): return False
     ev = threading.Event(); STOP[name] = ev
-    WORKERS[name] = asyncio.create_task(farm_loop(name, app)); return True
-
+    WORKERS[name] = asyncio.create_task(farm_loop(name)); return True
 def stop_farm(name):
     ev = STOP.get(name)
     if ev: ev.set()
     t = WORKERS.get(name)
     if t and not t.done(): t.cancel()
 
+# ===== WATCHER =====
 async def watcher_loop(app):
-    if not A: return
-    fn = next((n for n, a in A.items() if a.get("session_string")), None)
+    if not ACCS: return
+    fn = None
+    for n, a in ACCS.items():
+        if a.get("session_string"): fn = n; break
     if not fn: return
-    c = TelegramClient(StringSession(A[fn]["session_string"]), API_ID, API_HASH)
-    await c.connect()
-    if not await c.is_user_authorized():
-        await c.disconnect(); return
-    try: ent = await c.get_entity(CHANNEL)
+    client = None
+    try:
+        client = TelegramClient(StringSession(ACCS[fn]["session_string"]), API_ID, API_HASH)
+        await client.connect()
+        if not await client.is_user_authorized():
+            await client.disconnect(); return
+        ent = await client.get_entity(CHANNEL)
     except Exception as e:
-        print(f"[watcher] {e}"); await c.disconnect(); return
-    @c.on(events.NewMessage(chats=ent))
-    async def h(ev):
-        t = ev.message.message or ""
-        for code in re.findall(r"VUADAUMO_[A-Z0-9]{5,}", t.upper()):
-            if code in UC: continue
-            UC.add(code); sj(CF, list(UC))
-            print(f"[watcher] {code}")
-            for nm in list(A.keys()):
+        print("[watcher] " + str(e))
+        if client:
+            try: await client.disconnect()
+            except: pass
+        return
+    @client.on(events.NewMessage(chats=ent))
+    async def on_msg(ev):
+        text = ev.message.message or ""
+        for code in re.findall(r"VUADAUMO_[A-Z0-9]{5,}", text.upper()):
+            if code in USED: continue
+            USED.add(code); _save(CODE_FILE, list(USED))
+            print("[watcher] " + code)
+            for nm in list(ACCS.keys()):
                 r = await asyncio.to_thread(api, nm, "/api/redeem-code", {"code": code})
                 if r and r.status_code == 200:
                     try:
                         j = r.json()
                         if j.get("success"):
-                            A[nm].setdefault("stats", {})["redeem"] = A[nm]["stats"].get("redeem", 0) + 1
-                            sj(AF, A)
+                            st = ACCS[nm].setdefault("stats", {})
+                            st["redeem"] = st.get("redeem", 0) + 1
+                            _save(ACC_FILE, ACCS)
                     except: pass
-    await c.run_until_disconnected()
+    print("[watcher] listening " + CHANNEL)
+    await client.run_until_disconnected()
 
+# ===== UI =====
 def main_caption():
-    nn = len(A)
-    on = 0
+    nn = len(ACCS); on = 0
     for w in WORKERS.values():
         try:
             if not w.done(): on += 1
         except: pass
-    try:
-        wr = "BẬT" if (WATCH and not WATCH.done()) else "TẮT"
+    try: wr = "BẬT" if (WATCH and not WATCH.done()) else "TẮT"
     except: wr = "TẮT"
-    return (
-        "<b>🔥 A1ZTUS BYPASS</b>\n"
+    return ("<b>🔥 A1ZTUS BYPASS</b>\n"
         "<i>⚡ Trung tâm điều khiển Vua Dầu Mỏ</i>\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         "<b>📊 TỔNG QUAN</b>\n"
         "👥 Tài khoản: <b>" + str(nn) + "</b>\n"
         "▶️ Đang farm: <b>" + str(on) + "</b>\n"
-        "🎁 Code đã dùng: <b>" + str(len(UC)) + "</b>\n"
+        "🎁 Code đã dùng: <b>" + str(len(USED)) + "</b>\n"
         "📡 Theo dõi code: <b>" + wr + "</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n"
-        "<i>💡 Chọn chức năng bên dưới</i>"
-    )
-
-
+        "<i>💡 Chọn chức năng bên dưới</i>")
 def kb_main():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕  Thêm tài khoản", callback_data="add"),
@@ -244,14 +254,16 @@ def kb_main():
          InlineKeyboardButton("🎁  Auto code", callback_data="code_tog")],
         [InlineKeyboardButton("🔄  Làm mới tất cả", callback_data="rf_all"),
          InlineKeyboardButton("🗑  Xóa acc", callback_data="del_list")],
+        [InlineKeyboardButton("🔗  Chia sẻ bot", callback_data="share_help"),
+         InlineKeyboardButton("🆔  ID của tôi", callback_data="myid_help")],
     ])
-
 def kb_panel(n, f, run):
     def b(k, lb):
         v = f.get(k, False)
         mark = "🟢" if v else "🔴"
         return InlineKeyboardButton(mark + " " + lb, callback_data="tog:" + n + ":" + k)
-    rb = InlineKeyboardButton("⏹  Dừng farm", callback_data="stop:" + n) if run else InlineKeyboardButton("▶️  Bắt đầu farm", callback_data="start:" + n)
+    rb = (InlineKeyboardButton("⏹  Dừng farm", callback_data="stop:" + n) if run else
+          InlineKeyboardButton("▶️  Bắt đầu farm", callback_data="start:" + n))
     return InlineKeyboardMarkup([
         [b("mine", "⛏️ Đào mỏ"), b("claim", "💰 Thu hoạch")],
         [b("watch", "📺 Xem video"), b("box", "📦 Mở hộp")],
@@ -263,306 +275,318 @@ def kb_panel(n, f, run):
         [InlineKeyboardButton("🔄  Làm mới", callback_data="rf:" + n),
          InlineKeyboardButton("🔙  Quay lại", callback_data="menu")],
     ])
-
 def panel_text(n):
-    a = A.get(n, {})
-    u = a.get("user", {})
+    a = ACCS.get(n, {}); u = a.get("user", {})
     try: run = n in WORKERS and not WORKERS[n].done()
     except: run = False
     st = "🟢 <b>ĐANG CHẠY</b>" if run else "🔴 <b>ĐANG DỪNG</b>"
     s = a.get("stats", {})
-    oil = fx(u.get("oil_balance", 0))
-    vnd = u.get("vnd_balance", 0)
-    spd = u.get("speed_lvl", 0)
-    cap = u.get("capacity_lvl", 0)
-    tkt = u.get("tickets", 0)
-    shd = u.get("shards", 0)
-    box = u.get("mystery_boxes", 0)
-    ph = a.get("phone", "?")
-    un = u.get("username", "?")
-    return (
-        "👤 <b>" + n.upper() + "</b>\n"
-        "📱 " + str(ph) + "\n"
-        "🆔 @" + str(un) + "\n"
+    return ("👤 <b>" + n.upper() + "</b>\n"
+        "📱 " + str(a.get("phone", "?")) + "\n"
+        "🆔 @" + str(u.get("username", "?")) + "\n"
         "━━━━━━━━━━━━━━━━━━━\n"
-        "💰 Dầu: <b>" + str(oil) + "</b>\n"
-        "💵 VND: <b>" + str(vnd) + "</b>\n"
-        "⚡ Tốc độ: <b>" + str(spd) + "</b>   📦 Sức chứa: <b>" + str(cap) + "</b>\n"
-        "🎫 Vé: <b>" + str(tkt) + "</b>   💎 Mảnh: <b>" + str(shd) + "</b>   🎁 Hộp: <b>" + str(box) + "</b>\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        + st + "\n"
-        "<i>📊 " + str(s.get("claim",0)) + " thu · " + str(s.get("watch",0)) + " video · "
-        + str(s.get("box",0)) + " hộp · " + str(s.get("spin",0)) + " quay · "
-        + str(s.get("exchange",0)) + " đổi · " + str(s.get("redeem",0)) + " code</i>"
-    )
+        "💰 Dầu: <b>" + fmt(u.get("oil_balance", 0)) + "</b>\n"
+        "💵 VND: <b>" + str(u.get("vnd_balance", 0)) + "</b>\n"
+        "⚡ Tốc độ: <b>" + str(u.get("speed_lvl", 0)) + "</b>   "
+        "📦 Sức chứa: <b>" + str(u.get("capacity_lvl", 0)) + "</b>\n"
+        "🎫 Vé: <b>" + str(u.get("tickets", 0)) + "</b>   "
+        "💎 Mảnh: <b>" + str(u.get("shards", 0)) + "</b>   "
+        "🎁 Hộp: <b>" + str(u.get("mystery_boxes", 0)) + "</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n" + st + "\n"
+        "<i>📊 " + str(s.get("claim", 0)) + " thu · "
+        + str(s.get("watch", 0)) + " video · "
+        + str(s.get("box", 0)) + " hộp · "
+        + str(s.get("spin", 0)) + " quay · "
+        + str(s.get("exchange", 0)) + " đổi · "
+        + str(s.get("redeem", 0)) + " code</i>")
 
-async def cmd_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    if not ok(u.effective_user.id):
-        await u.message.reply_text("⛔ Bạn không có quyền truy cập")
-        return
+# ===== HANDLERS =====
+async def edit_msg(q, txt, kb):
     try:
-        await u.message.reply_photo(PHOTO, caption=main_caption(), parse_mode=ParseMode.HTML, reply_markup=kb_main())
-    except Exception:
-        await u.message.reply_text(main_caption(), parse_mode=ParseMode.HTML, reply_markup=kb_main())
-
-async def edit(q, txt, kb):
-    try:
-        if q.message.photo:
+        if q.message.photo or q.message.animation:
             await q.edit_message_caption(caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
         else:
             await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
     except Exception as e:
-        msg = str(e)
-        if "message is not modified" in msg:
-            return
+        if "message is not modified" in str(e): return
+        try: await q.message.delete()
+        except: pass
         try:
-            await q.message.delete()
-        except Exception:
-            pass
-        try:
-            await q.get_bot().send_photo(q.message.chat_id, PHOTO, caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
-        except Exception:
+            await q.get_bot().send_photo(q.message.chat_id, FURINA, caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except:
             try:
                 await q.get_bot().send_message(q.message.chat_id, txt, parse_mode=ParseMode.HTML, reply_markup=kb)
-            except Exception:
-                pass
-
+            except: pass
+async def cmd_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    cap = main_caption(); kb = kb_main()
+    if GIF_URL:
+        try: await u.message.reply_animation(GIF_URL, caption=cap, parse_mode=ParseMode.HTML, reply_markup=kb); return
+        except: pass
+    try: await u.message.reply_photo(FURINA, caption=cap, parse_mode=ParseMode.HTML, reply_markup=kb); return
+    except: pass
+    await u.message.reply_text(cap, parse_mode=ParseMode.HTML, reply_markup=kb)
+async def cmd_share(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    bi = await c.bot.get_me()
+    link = "https://t.me/" + bi.username
+    txt = ("🔗 <b>CHIA SẺ BOT</b>\n━━━━━━━━━━━━━━━━━━━\nGửi link này cho bạn bè:\n\n"
+        "👉 " + link + "\n\n<i>Mỗi người có tài khoản riêng, dữ liệu riêng.</i>")
+    await u.message.reply_text(txt, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+async def cmd_myid(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    uid = u.effective_user.id
+    role = "ADMIN" if is_admin(uid) else "USER"
+    await u.message.reply_text("🆔 ID: <code>" + str(uid) + "</code>\n👤 Vai trò: <b>" + role + "</b>", parse_mode=ParseMode.HTML)
 async def cb_menu(u, c):
-    q = u.callback_query; await q.answer(); await edit(q, main_caption(), kb_main())
-
+    q = u.callback_query; await q.answer(); await edit_msg(q, main_caption(), kb_main())
+async def cb_share_help(u, c):
+    q = u.callback_query; await q.answer()
+    bi = await c.bot.get_me()
+    link = "https://t.me/" + bi.username
+    txt = "🔗 <b>CHIA SẺ BOT</b>\n━━━━━━━━━━━━━━━━━━━\n\n👉 " + link + "\n\n<i>Mỗi người dùng có tài khoản riêng.</i>"
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Quay lại", callback_data="menu")]])
+    await edit_msg(q, txt, kb)
+async def cb_myid_help(u, c):
+    q = u.callback_query; await q.answer()
+    uid = u.effective_user.id
+    role = "ADMIN" if is_admin(uid) else "USER"
+    txt = "🆔 <b>ID:</b> <code>" + str(uid) + "</code>\n👤 <b>Vai trò:</b> " + role
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Quay lại", callback_data="menu")]])
+    await edit_msg(q, txt, kb)
 async def cb_panel_list(u, c):
     q = u.callback_query; await q.answer()
-    if not A: await edit(q, "📭 chua co acc", kb_main()); return
-    rows = [[InlineKeyboardButton(f"👤 {n}", callback_data=f"panel:{n}")] for n in A]
-    rows.append([InlineKeyboardButton("🔙 Back", callback_data="menu")])
-    await edit(q, "📋 CHON ACC", InlineKeyboardMarkup(rows))
-
+    names = user_accs(u.effective_user.id)
+    if not names:
+        await edit_msg(q, "📭 <b>Bạn chưa có tài khoản nào</b>\n\nNhấn ➕ Thêm tài khoản để bắt đầu", kb_main()); return
+    rows = [[InlineKeyboardButton("👤 " + n, callback_data="panel:" + n)] for n in names]
+    rows.append([InlineKeyboardButton("🔙 Quay lại", callback_data="menu")])
+    await edit_msg(q, "📋 <b>CHỌN TÀI KHOẢN</b>\n\n<i>Chạm để vào panel điều khiển</i>", InlineKeyboardMarkup(rows))
 async def cb_panel(u, c):
     q = u.callback_query; await q.answer()
     n = q.data.split(":", 1)[1]
-    if n not in A: await q.answer("not found", show_alert=True); return
+    if n not in ACCS: await q.answer("Không tìm thấy", show_alert=True); return
+    if not is_owner(u.effective_user.id, n): await q.answer("Không có quyền", show_alert=True); return
     r = await asyncio.to_thread(api, n, "/api/login")
     if r and r.status_code == 200:
-        try: A[n]["user"] = r.json().get("user", {}); sj(AF, A)
+        try: ACCS[n]["user"] = r.json().get("user", {}); _save(ACC_FILE, ACCS)
         except: pass
-    run = n in WORKERS and not WORKERS[n].done()
-    await edit(q, panel_text(n), kb_panel(n, A[n].get("flags", {}), run))
-
+    try: run = n in WORKERS and not WORKERS[n].done()
+    except: run = False
+    await edit_msg(q, panel_text(n), kb_panel(n, ACCS[n].get("flags", {}), run))
 async def cb_tog(u, c):
     q = u.callback_query
     _, n, k = q.data.split(":", 2)
-    if n not in A: await q.answer("not found"); return
-    f = A[n].setdefault("flags", {}); f[k] = not f.get(k, False); sj(AF, A)
-    await q.answer(f"{k}→{'ON' if f[k] else 'OFF'}")
+    if n not in ACCS or not is_owner(u.effective_user.id, n):
+        await q.answer("Không có quyền", show_alert=True); return
+    f = ACCS[n].setdefault("flags", {})
+    f[k] = not f.get(k, False); _save(ACC_FILE, ACCS)
+    await q.answer(("BẬT " if f[k] else "TẮT ") + k)
     await cb_panel(u, c)
-
 async def cb_start_acc(u, c):
     q = u.callback_query; n = q.data.split(":", 1)[1]
-    if n not in A: await q.answer("not found"); return
+    if n not in ACCS or not is_owner(u.effective_user.id, n):
+        await q.answer("Không có quyền", show_alert=True); return
     okk = start_farm(c.application, n)
-    await q.answer("started" if okk else "running")
-    await cb_panel(u, c)
-
+    await q.answer("Đã bật" if okk else "Đang chạy"); await cb_panel(u, c)
 async def cb_stop_acc(u, c):
     q = u.callback_query; n = q.data.split(":", 1)[1]
-    stop_farm(n); await q.answer("stopped"); await cb_panel(u, c)
-
+    if n not in ACCS or not is_owner(u.effective_user.id, n):
+        await q.answer("Không có quyền", show_alert=True); return
+    stop_farm(n); await q.answer("Đã dừng"); await cb_panel(u, c)
 async def cb_start_all(u, c):
     q = u.callback_query; cnt = 0
-    for n in A:
+    for n in user_accs(u.effective_user.id):
         if start_farm(c.application, n): cnt += 1
-    await q.answer(f"started {cnt}"); await cb_menu(u, c)
-
+    await q.answer("Đã bật " + str(cnt) + " tài khoản", show_alert=True); await cb_menu(u, c)
 async def cb_stop_all(u, c):
     q = u.callback_query
-    for n in list(WORKERS.keys()): stop_farm(n)
-    await q.answer("stopped all"); await cb_menu(u, c)
-
+    for n in user_accs(u.effective_user.id): stop_farm(n)
+    await q.answer("Đã tắt tất cả", show_alert=True); await cb_menu(u, c)
 async def cb_rf_all(u, c):
-    q = u.callback_query; await q.answer("refreshing...")
-    for n in A: await refresh(n)
-    await q.answer("done", show_alert=True); await cb_menu(u, c)
-
+    q = u.callback_query
+    await q.answer("Đang làm mới...")
+    for n in user_accs(u.effective_user.id): await refresh_idata(n)
+    await q.answer("Đã làm mới", show_alert=True); await cb_menu(u, c)
 async def cb_rf(u, c):
     q = u.callback_query; n = q.data.split(":", 1)[1]
-    await q.answer("refreshing...")
-    okk = await refresh(n); await q.answer("OK" if okk else "FAIL", show_alert=True)
-    await cb_panel(u, c)
-
+    if n not in ACCS or not is_owner(u.effective_user.id, n):
+        await q.answer("Không có quyền", show_alert=True); return
+    await q.answer("Đang làm mới...")
+    okk = await refresh_idata(n)
+    await q.answer("OK" if okk else "Thất bại", show_alert=True); await cb_panel(u, c)
 async def cb_wd(u, c):
-    q = u.callback_query; n = q.data.split(":", 1)[1]; await q.answer()
-    PWD[u.effective_user.id] = n
-    a = A.get(n, {}); uu = a.get("user", {})
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data=f"panel:{n}")]])
-    await edit(q, f"💰 RUT {n.upper()}\n\nVND: {uu.get('vnd_balance', 0)}\n"
-                  f"Bank: {uu.get('bank_name', '?')} / {uu.get('bank_account', '?')}\n\n"
-                  f"Gui so VND:", kb)
-
+    q = u.callback_query; n = q.data.split(":", 1)[1]
+    if n not in ACCS or not is_owner(u.effective_user.id, n):
+        await q.answer("Không có quyền", show_alert=True); return
+    await q.answer()
+    WD_WAIT[u.effective_user.id] = n
+    a = ACCS.get(n, {}); uu = a.get("user", {})
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Hủy", callback_data="panel:" + n)]])
+    txt = ("💰 <b>RÚT TIỀN — " + n.upper() + "</b>\n━━━━━━━━━━━━━━━━━━━\n"
+        "💵 VND: <b>" + str(uu.get("vnd_balance", 0)) + "</b>\n"
+        "🏦 Ngân hàng: " + str(uu.get("bank_name", "?")) + "\n"
+        "👤 Chủ TK: " + str(uu.get("bank_holder", "?")) + "\n"
+        "💳 STK: " + str(uu.get("bank_account", "?")) + "\n━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Gửi số VND muốn rút vào chat</i>")
+    await edit_msg(q, txt, kb)
 async def cb_up(u, c):
-    q = u.callback_query; n = q.data.split(":", 1)[1]; await q.answer()
+    q = u.callback_query; n = q.data.split(":", 1)[1]
+    if n not in ACCS or not is_owner(u.effective_user.id, n):
+        await q.answer("Không có quyền", show_alert=True); return
+    await q.answer()
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚡ Speed", callback_data=f"upgo:{n}:speed")],
-        [InlineKeyboardButton("📦 Capacity", callback_data=f"upgo:{n}:capacity")],
-        [InlineKeyboardButton("🔙 Back", callback_data=f"panel:{n}")]])
-    await edit(q, f"⬆️ UPGRADE {n.upper()}", kb)
-
+        [InlineKeyboardButton("⚡  Nâng tốc độ", callback_data="upgo:" + n + ":speed")],
+        [InlineKeyboardButton("📦  Nâng sức chứa", callback_data="upgo:" + n + ":capacity")],
+        [InlineKeyboardButton("🔙 Quay lại", callback_data="panel:" + n)]])
+    await edit_msg(q, "⬆️ <b>NÂNG CẤP — " + n.upper() + "</b>\n\n<i>Chọn loại nâng cấp</i>", kb)
 async def cb_upgo(u, c):
-    q = u.callback_query; _, n, t = q.data.split(":", 2); await q.answer("upgrading...")
+    q = u.callback_query; _, n, t = q.data.split(":", 2)
+    if n not in ACCS or not is_owner(u.effective_user.id, n):
+        await q.answer("Không có quyền", show_alert=True); return
+    await q.answer("Đang nâng cấp...")
     r = await asyncio.to_thread(api, n, "/api/upgrade", {"type": t})
     if r and r.status_code == 200:
         try:
             j = r.json()
             if j.get("success"):
-                A[n]["user"] = j.get("user", {}); sj(AF, A)
-                await q.answer("✔ " + str(j.get("message")), show_alert=True)
-            else:
-                await q.answer("✘ " + str(j.get("error") or j.get("message")), show_alert=True)
+                ACCS[n]["user"] = j.get("user", {}); _save(ACC_FILE, ACCS)
+                await q.answer("✓ " + str(j.get("message")), show_alert=True)
+            else: await q.answer("✗ " + str(j.get("error") or j.get("message")), show_alert=True)
         except: pass
     await cb_panel(u, c)
-
 async def cb_code_tog(u, c):
     global WATCH
     q = u.callback_query
     if WATCH and not WATCH.done():
-        WATCH.cancel(); WATCH = None; await q.answer("OFF", show_alert=True)
+        WATCH.cancel(); WATCH = None; await q.answer("Đã TẮT theo dõi code", show_alert=True)
     else:
-        if not A:
-            await q.answer("Chua co acc nao", show_alert=True)
+        if not ACCS: await q.answer("Chưa có tài khoản nào", show_alert=True)
         else:
             try:
                 WATCH = asyncio.create_task(watcher_loop(c.application))
-                await q.answer("ON", show_alert=True)
-            except Exception as e:
-                await q.answer(f"ERR: {e}", show_alert=True)
-
+                await q.answer("Đã BẬT theo dõi code", show_alert=True)
+            except Exception as e: await q.answer("Lỗi: " + str(e), show_alert=True)
 async def cb_live(u, c):
     q = u.callback_query; await q.answer()
-    ls = ["📊 LIVE", ""]
-    for nm, t in WORKERS.items():
-        if t.done(): continue
-        a = A.get(nm, {}); uu = a.get("user", {}); s = a.get("stats", {})
-        oil = fx(uu.get("oil_balance", 0))
-        ls.append(f"🟢 {nm}  oil:{oil}  vnd:{uu.get('vnd_balance', 0)}")
-        ls.append(f"   clm:{s.get('claim', 0)} vid:{s.get('watch', 0)} box:{s.get('box', 0)} exch:{s.get('exchange', 0)}")
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data="live"),
-                                 InlineKeyboardButton("🔙 Back", callback_data="menu")]])
-    await edit(q, "\n".join(ls) if len(ls) > 2 else "chua chay acc nao", kb)
-
+    lines = ["📊 <b>LIVE VIEW</b>", "━━━━━━━━━━━━━━━━━━━", ""]
+    any_run = False
+    for nm, task in WORKERS.items():
+        try:
+            if task.done(): continue
+        except: continue
+        any_run = True
+        a = ACCS.get(nm, {}); uu = a.get("user", {}); s = a.get("stats", {})
+        lines.append("🟢 <b>" + nm + "</b>")
+        lines.append("   💰 " + fmt(uu.get("oil_balance", 0)) + " dầu · 💵 " + str(uu.get("vnd_balance", 0)) + " VND")
+        lines.append("   📊 " + str(s.get("claim", 0)) + " thu · " + str(s.get("watch", 0)) + " video · " + str(s.get("box", 0)) + " hộp")
+        lines.append("")
+    if not any_run: lines.append("<i>Chưa có tài khoản nào đang farm</i>")
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Làm mới", callback_data="live"),
+                                 InlineKeyboardButton("🔙 Quay lại", callback_data="menu")]])
+    await edit_msg(q, "\n".join(lines), kb)
 async def cb_del_list(u, c):
     q = u.callback_query; await q.answer()
-    if not A: await q.answer("trong", show_alert=True); return
-    rows = [[InlineKeyboardButton(f"🗑 {n}", callback_data=f"del:{n}")] for n in A]
-    rows.append([InlineKeyboardButton("🔙 Back", callback_data="menu")])
-    await edit(q, "🗑 CHON XOA", InlineKeyboardMarkup(rows))
-
+    names = user_accs(u.effective_user.id)
+    if not names: await q.answer("Bạn chưa có tài khoản nào", show_alert=True); return
+    rows = [[InlineKeyboardButton("🗑 " + n, callback_data="del:" + n)] for n in names]
+    rows.append([InlineKeyboardButton("🔙 Quay lại", callback_data="menu")])
+    await edit_msg(q, "🗑 <b>CHỌN TÀI KHOẢN ĐỂ XÓA</b>", InlineKeyboardMarkup(rows))
 async def cb_del(u, c):
     q = u.callback_query; n = q.data.split(":", 1)[1]
+    if n not in ACCS or not is_owner(u.effective_user.id, n):
+        await q.answer("Không có quyền", show_alert=True); return
     if n in WORKERS: stop_farm(n)
-    A.pop(n, None); sj(AF, A)
-    await q.answer(f"xoa {n}", show_alert=True); await cb_menu(u, c)
+    ACCS.pop(n, None); _save(ACC_FILE, ACCS)
+    await q.answer("Đã xóa " + n, show_alert=True); await cb_menu(u, c)
 
-ASK_NAME, ASK_PHONE, ASK_OTP, ASK_PWD = range(4)
-
+# ===== CONVERSATION =====
+S_NAME, S_PHONE, S_OTP, S_PWD = range(4)
 async def add_start(u, c):
     q = u.callback_query; await q.answer()
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data="menu")]])
-    await edit(q, "➕ THEM ACC\n\nGui ten acc (vd FOX):", kb)
-    return ASK_NAME
-
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Hủy", callback_data="menu")]])
+    await edit_msg(q, "➕ <b>THÊM TÀI KHOẢN</b>\n\n<i>Gửi tên tài khoản (vd: FOX)</i>", kb)
+    return S_NAME
 async def add_name(u, c):
     n = u.message.text.strip()
-    if not n or n in A:
-        await u.message.reply_text("❌ trung/trong. Nhap lai:"); return ASK_NAME
+    if not n or n in ACCS:
+        await u.message.reply_text("❌ Tên trùng hoặc trống. Nhập lại:"); return S_NAME
     c.user_data["an"] = n
-    await u.message.reply_text(f"📱 SDT cho {n} (+84...):")
-    return ASK_PHONE
-
+    await u.message.reply_text("📱 Nhập SĐT cho <b>" + n + "</b> (vd: +84837258569):", parse_mode=ParseMode.HTML)
+    return S_PHONE
 async def add_phone(u, c):
     ph = u.message.text.strip()
     if not ph.startswith("+"):
-        await u.message.reply_text("❌ can +84. Nhap lai:"); return ASK_PHONE
-    n = c.user_data["an"]; await u.message.reply_text("⏳ gui OTP...")
+        await u.message.reply_text("❌ Cần bắt đầu bằng +84. Nhập lại:"); return S_PHONE
+    n = c.user_data["an"]
+    await u.message.reply_text("⏳ Đang gửi OTP...")
     try:
-        cl = TelegramClient(StringSession(), API_ID, API_HASH); await cl.connect()
-        s = await cl.send_code_request(ph)
-        PEND[u.effective_user.id] = {"name": n, "phone": ph, "client": cl, "hash": s.phone_code_hash}
-        await u.message.reply_text("📨 OTP gui (app hoac SMS). Nhap OTP:")
-        return ASK_OTP
+        cl = TelegramClient(StringSession(), API_ID, API_HASH)
+        await cl.connect()
+        sent = await cl.send_code_request(ph)
+        PEND[u.effective_user.id] = {"name": n, "phone": ph, "client": cl, "hash": sent.phone_code_hash, "owner": u.effective_user.id}
+        await u.message.reply_text("📨 OTP đã gửi (về app Telegram hoặc SMS).\n\nNhập OTP:")
+        return S_OTP
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}"); return ConversationHandler.END
-
+        await u.message.reply_text("❌ " + str(e)); return ConversationHandler.END
 async def add_otp(u, c):
     code = u.message.text.strip().replace(" ", "")
     p = PEND.get(u.effective_user.id)
-    if not p: await u.message.reply_text("❌ het han"); return ConversationHandler.END
-    try:
-        await p["client"].sign_in(phone=p["phone"], code=code, phone_code_hash=p["hash"])
+    if not p: await u.message.reply_text("❌ Hết phiên. Bấm /start để làm lại."); return ConversationHandler.END
+    try: await p["client"].sign_in(phone=p["phone"], code=code, phone_code_hash=p["hash"])
     except SessionPasswordNeededError:
-        await u.message.reply_text("🔐 2FA. Nhap password:"); return ASK_PWD
+        await u.message.reply_text("🔐 Có 2FA. Nhập mật khẩu:"); return S_PWD
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}\nNhap lai OTP:"); return ASK_OTP
-    sess = p["client"].session.save(); me = await p["client"].get_me()
-    await p["client"].disconnect()
-    A[p["name"]] = {"phone": p["phone"], "session_string": sess,
-        "flags": {"mine": True, "claim": True, "watch": True, "box": True, "craft": True, "spin": True, "exchange": True, "upgrade": True},
-        "created": datetime.now().isoformat(), "user": {}, "stats": {}, "cd": {}}
-    sj(AF, A); PEND.pop(u.effective_user.id, None)
-    await u.message.reply_text("⏳ lay initData...")
-    okk = await refresh(p["name"])
-    await u.message.reply_text(f"✅ them {p['name']}\n@{me.username or me.first_name}  initData:{'OK' if okk else 'FAIL'}",
-        reply_markup=kb_main())
-    return ConversationHandler.END
-
+        await u.message.reply_text("❌ " + str(e) + "\n\nNhập lại OTP:"); return S_OTP
+    await _finalize_add(u, c, p); return ConversationHandler.END
 async def add_pwd(u, c):
-    pwd = u.message.text.strip(); p = PEND.get(u.effective_user.id)
-    if not p: await u.message.reply_text("❌ het han"); return ConversationHandler.END
+    pwd = u.message.text.strip()
+    p = PEND.get(u.effective_user.id)
+    if not p: await u.message.reply_text("❌ Hết phiên. Bấm /start để làm lại."); return ConversationHandler.END
     try: await p["client"].sign_in(password=pwd)
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}\nNhap lai:"); return ASK_PWD
-    sess = p["client"].session.save(); me = await p["client"].get_me()
-    await p["client"].disconnect()
-    A[p["name"]] = {"phone": p["phone"], "session_string": sess,
+        await u.message.reply_text("❌ " + str(e) + "\n\nNhập lại mật khẩu:"); return S_PWD
+    await _finalize_add(u, c, p); return ConversationHandler.END
+async def _finalize_add(u, c, p):
+    try:
+        sess = p["client"].session.save()
+        me = await p["client"].get_me()
+        await p["client"].disconnect()
+    except: sess = ""; me = None
+    ACCS[p["name"]] = {"phone": p["phone"], "session_string": sess, "owner": p["owner"],
+        "created": datetime.now().isoformat(),
         "flags": {"mine": True, "claim": True, "watch": True, "box": True, "craft": True, "spin": True, "exchange": True, "upgrade": True},
-        "created": datetime.now().isoformat(), "user": {}, "stats": {}, "cd": {}}
-    sj(AF, A); PEND.pop(u.effective_user.id, None)
-    await refresh(p["name"])
-    await u.message.reply_text(f"✅ them {p['name']}", reply_markup=kb_main())
-    return ConversationHandler.END
-
+        "user": {}, "stats": {}, "cd": {}}
+    _save(ACC_FILE, ACCS)
+    PEND.pop(u.effective_user.id, None)
+    uname = me.username if me and me.username else (me.first_name if me else "?")
+    await u.message.reply_text("⏳ Đang lấy initData...")
+    okk = await refresh_idata(p["name"])
+    await u.message.reply_text("✅ Đã thêm <b>" + p["name"] + "</b>\n👤 @" + str(uname) + "\n📡 initData: " + ("OK" if okk else "LỖI"),
+        parse_mode=ParseMode.HTML, reply_markup=kb_main())
 async def add_cancel(u, c):
     p = PEND.pop(u.effective_user.id, None)
     if p:
         try: await p["client"].disconnect()
         except: pass
-    await u.message.reply_text("da huy")
+    await u.message.reply_text("Đã hủy.")
     return ConversationHandler.END
-
 async def handle_text(u, c):
-    n = PWD.pop(u.effective_user.id, None)
+    n = WD_WAIT.pop(u.effective_user.id, None)
     if not n: return
-    try: amt = float(u.message.text.strip().replace(",", ""))
-    except: await u.message.reply_text("❌ so khong hop le"); return
+    try: amt = float(u.message.text.strip().replace(",", "").replace(".", ""))
+    except: await u.message.reply_text("❌ Số không hợp lệ."); return
     r = await asyncio.to_thread(api, n, "/api/withdraw", {"amount": amt})
     if r and r.status_code == 200:
         try:
             j = r.json()
-            await u.message.reply_text(("✅ " + str(j.get("message"))) if j.get("success") else ("❌ " + str(j.get("error") or j.get("message"))), reply_markup=kb_main())
+            if j.get("success"): await u.message.reply_text("✅ " + str(j.get("message")), reply_markup=kb_main())
+            else: await u.message.reply_text("❌ " + str(j.get("error") or j.get("message")), reply_markup=kb_main())
         except: await u.message.reply_text(r.text[:200], reply_markup=kb_main())
-    else: await u.message.reply_text("HTTP fail", reply_markup=kb_main())
+    else: await u.message.reply_text("❌ Gửi lệnh thất bại.", reply_markup=kb_main())
 
-async def post_init(app):
-    # watcher chi start khi user bam nut - khong block init
-    print("[+] post_init ok")
-
-def _health_server():
-    """HTTP server bind PORT cho Render health check - chay nen"""
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-    import threading
+# ===== HEALTH =====
+def start_health():
     class H(BaseHTTPRequestHandler):
         def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
+            self.send_response(200); self.send_header("Content-Type", "text/plain; charset=utf-8"); self.end_headers()
             self.wfile.write(b"A1ZTUS BYPASS alive")
         def do_HEAD(self):
             self.send_response(200); self.end_headers()
@@ -570,25 +594,30 @@ def _health_server():
     port = int(os.environ.get("PORT", 8080))
     try:
         srv = HTTPServer(("0.0.0.0", port), H)
-        print(f"[*] health server bind :{port}")
-        t = threading.Thread(target=srv.serve_forever, daemon=True)
-        t.start()
-    except Exception as e:
-        print(f"[!] health server: {e}")
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        print("[+] health :" + str(port))
+    except Exception as e: print("[!] health: " + str(e))
 
+async def post_init(app): print("[+] bot ready")
+
+# ===== MAIN =====
 def main():
-    _health_server()
+    start_health()
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
     conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_start, pattern="^add$")],
-        states={ASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
-                ASK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_phone)],
-                ASK_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_otp)],
-                ASK_PWD: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_pwd)]},
-        fallbacks=[CommandHandler("cancel", add_cancel)], per_message=False)
+        states={S_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
+                S_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_phone)],
+                S_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_otp)],
+                S_PWD: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_pwd)]},
+        fallbacks=[CommandHandler("cancel", add_cancel)])
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("share", cmd_share))
+    app.add_handler(CommandHandler("myid", cmd_myid))
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu$"))
+    app.add_handler(CallbackQueryHandler(cb_share_help, pattern="^share_help$"))
+    app.add_handler(CallbackQueryHandler(cb_myid_help, pattern="^myid_help$"))
     app.add_handler(CallbackQueryHandler(cb_panel_list, pattern="^panel_list$"))
     app.add_handler(CallbackQueryHandler(cb_panel, pattern=r"^panel:"))
     app.add_handler(CallbackQueryHandler(cb_tog, pattern=r"^tog:"))
@@ -606,7 +635,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_del_list, pattern="^del_list$"))
     app.add_handler(CallbackQueryHandler(cb_del, pattern=r"^del:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    print("[*] polling mode + health server")
+    print("[*] polling...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
