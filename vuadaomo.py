@@ -364,7 +364,14 @@ async def cb_code_tog(u, c):
     if WATCH and not WATCH.done():
         WATCH.cancel(); WATCH = None; await q.answer("OFF", show_alert=True)
     else:
-        WATCH = asyncio.create_task(watcher_loop(c.application)); await q.answer("ON", show_alert=True)
+        if not A:
+            await q.answer("Chua co acc nao", show_alert=True)
+        else:
+            try:
+                WATCH = asyncio.create_task(watcher_loop(c.application))
+                await q.answer("ON", show_alert=True)
+            except Exception as e:
+                await q.answer(f"ERR: {e}", show_alert=True)
 
 async def cb_live(u, c):
     q = u.callback_query; await q.answer()
@@ -482,8 +489,8 @@ async def handle_text(u, c):
     else: await u.message.reply_text("HTTP fail", reply_markup=kb_main())
 
 async def post_init(app):
-    global WATCH
-    WATCH = asyncio.create_task(watcher_loop(app))
+    # watcher chi start khi user bam nut - khong block init
+    print("[+] post_init ok")
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
@@ -514,15 +521,8 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_del_list, pattern="^del_list$"))
     app.add_handler(CallbackQueryHandler(cb_del, pattern=r"^del:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    PORT = int(os.environ.get("PORT", 8080))
-    URL = os.environ.get("RENDER_EXTERNAL_URL", "")
-    if URL:
-        print(f"[*] webhook {URL}")
-        app.run_webhook(listen="0.0.0.0", port=PORT, url_path=BOT_TOKEN,
-            webhook_url=f"{URL}/{BOT_TOKEN}", drop_pending_updates=True)
-    else:
-        print("[*] polling")
-        app.run_polling(drop_pending_updates=True)
+    print("[*] polling mode")
+    app.run_polling(drop_pending_updates=True, close_loop=False)
 
 if __name__ == "__main__":
     main()
