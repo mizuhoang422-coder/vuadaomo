@@ -13,6 +13,12 @@ from telethon import TelegramClient, functions, events
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
 import requests
+try:
+    import code_feature
+    HAS_CODE_FEATURE = True
+except Exception as _e:
+    print('[!] code_feature khong load:', _e)
+    HAS_CODE_FEATURE = False
 
 # ===== CONFIG =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -176,6 +182,9 @@ async def farm_loop(name):
                     except: pass
                     rn += 1
                     if rn >= 5: break
+            if HAS_CODE_FEATURE:
+                try: await code_feature.try_retro(name, a)
+                except: pass
             if f.get("mine") and not u.get("is_mining"):
                 await do_task(name, "mine", "/api/start-mine", cd_key="mine", cd_secs=30)
             if f.get("claim"): await do_task(name, "claim", "/api/claim", cd_key="claim", cd_secs=45)
@@ -697,7 +706,7 @@ async def cb_code_tog(u, c):
         if not ACCS: await q.answer("Chưa có tài khoản nào", show_alert=True)
         else:
             try:
-                WATCH = asyncio.create_task(watcher_loop(c.application))
+                WATCH = asyncio.create_task((code_feature.watcher_loop(c.application) if HAS_CODE_FEATURE else watcher_loop(c.application)))
                 await q.answer("Đã BẬT theo dõi code", show_alert=True)
             except Exception as e: await q.answer("Lỗi: " + str(e), show_alert=True)
 async def cb_live(u, c):
@@ -841,6 +850,11 @@ async def post_init(app): print("[+] bot ready")
 def main():
     start_health()
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+    if HAS_CODE_FEATURE:
+        try:
+            code_feature.install(app, globals())
+        except Exception as _e:
+            print('[!] code_feature install:', _e)
     conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_start, pattern="^add$")],
         states={S_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
