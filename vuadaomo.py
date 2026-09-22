@@ -300,7 +300,7 @@ def kb_main():
          InlineKeyboardButton("🗑  Xóa acc", callback_data="del_list")],
         [InlineKeyboardButton("🔗  Chia sẻ bot", callback_data="share_help"),
          InlineKeyboardButton("🆔  ID của tôi", callback_data="myid_help")],
-        [InlineKeyboardButton("🔑  Thêm bằng session (khuyến nghị)", callback_data="addsess_help")],
+        [InlineKeyboardButton("🔑  Thêm bằng session (khuyến nghị)", callback_data="add_session")],
     ])
 def kb_panel(n, f, run):
     def b(k, lb):
@@ -888,7 +888,6 @@ def main():
     app.add_handler(CommandHandler("addsession", addsess_start))
     app.add_handler(CommandHandler("addsession_auto", cmd_addsession_auto))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu$"))
-    app.add_handler(CallbackQueryHandler(cb_addsess_help, pattern="^addsess_help$"))
     app.add_handler(CallbackQueryHandler(cb_share_help, pattern="^share_help$"))
     app.add_handler(CallbackQueryHandler(cb_myid_help, pattern="^myid_help$"))
     app.add_handler(CallbackQueryHandler(cb_panel_list, pattern="^panel_list$"))
