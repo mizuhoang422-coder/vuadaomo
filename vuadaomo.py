@@ -495,104 +495,85 @@ async def addsess_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     q = u.callback_query
     if q: await q.answer()
     c.user_data.clear()
+    msg1 = '<b>THEM ACC BANG SESSION</b>' + chr(10) + chr(10) + 'Buoc 1/3: Nhap <b>ten acc</b> (vd: FOX)'
     if q:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Huy", callback_data="menu")]])
-        txt = ("<b>THEM ACC BANG SESSION</b>
-
-"
-               "Buoc 1/3: Nhap <b>ten acc</b> (vd: FOX)")
-        try: await q.edit_message_caption(caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton('Huy', callback_data='menu')]])
+        try: await q.edit_message_caption(caption=msg1, parse_mode=ParseMode.HTML, reply_markup=kb)
         except:
-            try: await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
-            except: await q.message.reply_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+            try: await q.edit_message_text(msg1, parse_mode=ParseMode.HTML, reply_markup=kb)
+            except: await q.message.reply_text(msg1, parse_mode=ParseMode.HTML)
     else:
-        await u.message.reply_text("<b>THEM ACC BANG SESSION</b>
-
-Buoc 1/3: Nhap <b>ten acc</b> (vd: FOX)", parse_mode=ParseMode.HTML)
+        await u.message.reply_text(msg1, parse_mode=ParseMode.HTML)
     return AS_NAME
 
 
 async def addsess_name(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    n = (u.message.text or "").strip()
+    n = (u.message.text or '').strip()
     try: await u.message.delete()
     except: pass
-    if not n or not re.match(r"^[A-Za-z0-9_]{1,20}$", n):
-        await u.message.reply_text("Ten chi gom chu/so/gach duoi, 1-20 ky tu. Nhap lai hoac /cancel:")
+    if not n or not re.match(r'^[A-Za-z0-9_]{1,20}$', n):
+        await u.message.reply_text('Ten chi gom chu/so/gach duoi (1-20). Nhap lai hoac /cancel:')
         return AS_NAME
     if n in ACCS and not is_owner(u.effective_user.id, n):
-        await u.message.reply_text("Ten " + n + " da co nguoi dung. Nhap ten khac:")
+        await u.message.reply_text('Ten da co nguoi dung. Nhap ten khac:')
         return AS_NAME
     if n in ACCS:
-        await u.message.reply_text("Ten " + n + " da co trong acc cua ban. Nhap ten khac:")
+        await u.message.reply_text('Ten da co trong acc cua ban. Nhap ten khac:')
         return AS_NAME
-    c.user_data["as_name"] = n
-    await u.message.reply_text("Buoc 2/3: Nhap <b>SDT</b> (+84, vd: +84837258569):", parse_mode=ParseMode.HTML)
+    c.user_data['as_name'] = n
+    await u.message.reply_text('Buoc 2/3: Nhap <b>SDT</b> (+84, vd: +84837258569):', parse_mode=ParseMode.HTML)
     return AS_PHONE
 
 
 async def addsess_phone(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    ph = (u.message.text or "").strip()
+    ph = (u.message.text or '').strip()
     try: await u.message.delete()
     except: pass
-    ph_clean = ph.replace(" ", "").replace("-", "")
-    if not ph_clean.startswith("+") or not ph_clean[1:].isdigit() or len(ph_clean) < 10:
-        await u.message.reply_text("SDT phai co dang +84xxxxxxxxx. Nhap lai hoac /cancel:")
+    ph_clean = ph.replace(' ', '').replace('-', '')
+    if not ph_clean.startswith('+') or not ph_clean[1:].isdigit() or len(ph_clean) < 10:
+        await u.message.reply_text('SDT phai dang +84xxxxxxxxx. Nhap lai hoac /cancel:')
         return AS_PHONE
-    c.user_data["as_phone"] = ph_clean
-    await u.message.reply_text(
-        "Buoc 3/3: Paste <b>session string</b> vao day.
-
-"
-        "<i>Lay session: chay script get_session.py tren may tinh (login 1 lan), copy chuoi dai bat dau bang <code>1BV...</code></i>
-
-"
-        "Bot se XOA tin nay sau khi luu. Go /cancel de huy.",
-        parse_mode=ParseMode.HTML)
+    c.user_data['as_phone'] = ph_clean
+    m2 = 'Buoc 3/3: Paste <b>session string</b> vao day.' + chr(10) + chr(10)
+    m2 += '<i>Lay session bang get_session.py tren may tinh (login 1 lan). Chuoi bat dau 1BV...</i>' + chr(10) + chr(10)
+    m2 += 'Bot se XOA tin nay sau khi luu. Go /cancel de huy.'
+    await u.message.reply_text(m2, parse_mode=ParseMode.HTML)
     return AS_SESS
 
 
 async def addsess_sess(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    s = (u.message.text or "").strip()
+    s = (u.message.text or '').strip()
     try: await u.message.delete()
     except: pass
-    name = c.user_data.get("as_name")
-    phone = c.user_data.get("as_phone")
+    name = c.user_data.get('as_name')
+    phone = c.user_data.get('as_phone')
     if not name or not phone:
-        await u.message.reply_text("Phien bi mat. Go /addsession de lam lai.")
+        await u.message.reply_text('Phien bi mat. /addsession de lam lai.')
         return ConversationHandler.END
     if not s or len(s) < 100:
-        await u.message.reply_text("Session qua ngan (can > 100 ky tu). Nhap lai hoac /cancel:")
+        await u.message.reply_text('Session qua ngan (>100 ky tu). Nhap lai hoac /cancel:')
         return AS_SESS
-    msg = await u.message.reply_text("Dang kiem tra session...")
-    try:
-        test = await fetch_initdata(s)
-    except Exception as e:
-        test = None
-        err = str(e)
+    msg = await u.message.reply_text('Dang kiem tra session...')
+    try: test = await fetch_initdata(s)
+    except: test = None
     if not test:
-        try: await msg.edit_text("Session khong hoat dong. Kiem tra lai session string, hoac /cancel.")
+        try: await msg.edit_text('Session khong hoat dong. Thu lai hoac /cancel.')
         except: pass
         return AS_SESS
-    ACCS[name] = {
-        "phone": phone, "session_string": s, "owner": u.effective_user.id,
-        "created": datetime.now().isoformat(),
-        "flags": {"mine": True, "claim": True, "watch": True, "box": True, "craft": True, "spin": True, "exchange": True, "upgrade": True},
-        "user": {}, "stats": {}, "cd": {},
-        "init_data": test, "init_ts": time.time(),
-    }
+    ACCS[name] = {'phone': phone, 'session_string': s, 'owner': u.effective_user.id,
+        'created': datetime.now().isoformat(),
+        'flags': {'mine': True, 'claim': True, 'watch': True, 'box': True, 'craft': True, 'spin': True, 'exchange': True, 'upgrade': True},
+        'user': {}, 'stats': {}, 'cd': {}, 'init_data': test, 'init_ts': time.time()}
     _save(ACC_FILE, ACCS)
     c.user_data.clear()
-    await msg.edit_text("Da them acc <b>" + name + "</b>
-
-SDT: " + phone + "
-Init data: OK",
-        parse_mode=ParseMode.HTML, reply_markup=kb_main())
+    done = 'Da them acc <b>' + name + '</b>' + chr(10) + chr(10) + 'SDT: ' + phone + chr(10) + 'Init data: OK'
+    await msg.edit_text(done, parse_mode=ParseMode.HTML, reply_markup=kb_main())
     return ConversationHandler.END
 
 
 async def addsess_cancel(u: Update, c: ContextTypes.DEFAULT_TYPE):
     c.user_data.clear()
-    await u.message.reply_text("Da huy.")
+    await u.message.reply_text('Da huy.')
     return ConversationHandler.END
 
 
