@@ -346,12 +346,9 @@ def panel_text(n):
 
 # ===== HANDLERS =====
 async def edit_msg(q, txt, kb):
-    # chi edit, khong bao gio xoa + gui moi -> khong bi "loi"
+    m = q.message
     try:
-        if q.message.photo:
-            await q.edit_message_caption(caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
-            return
-        if q.message.animation:
+        if m.animation or m.photo:
             await q.edit_message_caption(caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
             return
         await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -359,12 +356,15 @@ async def edit_msg(q, txt, kb):
         msg = str(e)
         if "message is not modified" in msg:
             return
-        # neu animation khong edit duoc caption -> gui photo moi lan dau
-        if "animation" in msg.lower() or "caption" in msg.lower():
-            try:
-                await q.get_bot().send_photo(q.message.chat_id, FURINA, caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
-            except: pass
-        # cac loi khac: im lang, khong xoa
+        # chi khi Telegram that su tu choi edit - gui animation moi
+        try:
+            if GIF_URL:
+                await q.get_bot().send_animation(q.message.chat_id, GIF_URL,
+                    caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+            else:
+                await q.get_bot().send_message(q.message.chat_id, txt,
+                    parse_mode=ParseMode.HTML, reply_markup=kb)
+        except: pass
 
 
 async def addsess_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -547,15 +547,18 @@ async def cmd_codes(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    # gui GIF rieng (neu co) - khong chua menu
-    if GIF_URL:
-        try: await u.message.reply_animation(GIF_URL)
-        except: pass
-    # menu la photo tinh - edit caption on dinh
     cap = main_caption(); kb = kb_main()
-    try: await u.message.reply_photo(FURINA, caption=cap, parse_mode=ParseMode.HTML, reply_markup=kb); return
+    if GIF_URL:
+        try:
+            await u.message.reply_animation(GIF_URL, caption=cap, parse_mode=ParseMode.HTML, reply_markup=kb)
+            return
+        except Exception as e:
+            print("[start] animation fail: " + str(e))
+    try:
+        await u.message.reply_text(cap, parse_mode=ParseMode.HTML, reply_markup=kb)
     except: pass
-    await u.message.reply_text(cap, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+
 async def cmd_share(u: Update, c: ContextTypes.DEFAULT_TYPE):
     bi = await c.bot.get_me()
     link = "https://t.me/" + bi.username
