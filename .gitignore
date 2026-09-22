@@ -4,3 +4,7 @@ __pycache__/
 /tmp/
 *.session
 .env
+*.bak_*
+_patch_*.py
+_auto_patch.py
+_code_feature_patch.py
