@@ -289,8 +289,9 @@ def main_caption():
         "<i>💡 Chọn chức năng bên dưới</i>")
 def kb_main():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕  Thêm tài khoản", callback_data="add"),
-         InlineKeyboardButton("📋  Danh sách acc", callback_data="panel_list")],
+        [InlineKeyboardButton("➕  Thêm (login)", callback_data="add"),
+         InlineKeyboardButton("🔑  Thêm (session)", callback_data="add_session")],
+        [InlineKeyboardButton("📋  Danh sách acc", callback_data="panel_list")],
         [InlineKeyboardButton("▶️  Bật tất cả", callback_data="start_all"),
          InlineKeyboardButton("⏹  Tắt tất cả", callback_data="stop_all")],
         [InlineKeyboardButton("📊  Live view", callback_data="live"),
@@ -365,62 +366,6 @@ async def edit_msg(q, txt, kb):
                 await q.get_bot().send_message(q.message.chat_id, txt,
                     parse_mode=ParseMode.HTML, reply_markup=kb)
         except: pass
-
-
-async def addsess_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    await u.message.reply_text("➕ <b>THÊM BẰNG SESSION</b>\n\nNhập tên acc (vd: FOX):", parse_mode=ParseMode.HTML)
-    return AS_NAME
-
-async def addsess_name(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    n = u.message.text.strip()
-    if not n or n in ACCS:
-        await u.message.reply_text("❌ Trùng/trống. Nhập lại:"); return AS_NAME
-    c.user_data["asn"] = n
-    await u.message.reply_text("📱 Nhập SĐT (+84...):")
-    return AS_PHONE
-
-async def addsess_phone(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    ph = u.message.text.strip()
-    if not ph.startswith("+"):
-        await u.message.reply_text("❌ Cần bắt đầu +84. Nhập lại:"); return AS_PHONE
-    c.user_data["asp"] = ph
-    await u.message.reply_text(
-        "📋 Paste session string vào đây.\n\n"
-        "⚠️ Bot sẽ <b>XÓA TIN NHẮN</b> chứa session ngay sau khi lưu.\n\n"
-        "<i>Lấy session: chạy get_session.py trên máy tính, login 1 lần, copy chuỗi dài.</i>",
-        parse_mode=ParseMode.HTML)
-    return AS_SESS
-
-async def addsess_sess(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    s = u.message.text.strip()
-    n = c.user_data.get("asn"); ph = c.user_data.get("asp")
-    try: await u.message.delete()
-    except: pass
-    if not s or len(s) < 50:
-        await u.message.reply_text("❌ Session quá ngắn. Bấm /addsession lại."); return ConversationHandler.END
-    msg = await u.message.reply_text("⏳ Đang kiểm tra session...")
-    try:
-        test = await fetch_initdata(s)
-    except Exception as e:
-        test = None
-    if not test:
-        await msg.edit_text("❌ Session không hoạt động hoặc không lấy được initData.")
-        return ConversationHandler.END
-    ACCS[n] = {
-        "phone": ph, "session_string": s, "owner": u.effective_user.id,
-        "created": datetime.now().isoformat(),
-        "flags": {"mine": True, "claim": True, "watch": True, "box": True, "craft": True, "spin": True, "exchange": True, "upgrade": True},
-        "user": {}, "stats": {}, "cd": {},
-        "init_data": test, "init_ts": time.time(),
-    }
-    _save(ACC_FILE, ACCS)
-    await msg.edit_text("✅ Đã thêm <b>" + n + "</b>\n📡 initData: OK\n📱 " + ph, parse_mode=ParseMode.HTML, reply_markup=kb_main())
-    return ConversationHandler.END
-
-async def addsess_cancel(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    await u.message.reply_text("Đã hủy.")
-    return ConversationHandler.END
-
 
 
 async def cmd_addsession_auto(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -546,6 +491,111 @@ async def cmd_codes(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await u.message.reply_text("\n".join(lines))
 
 
+async def addsess_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    q = u.callback_query
+    if q: await q.answer()
+    c.user_data.clear()
+    if q:
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Huy", callback_data="menu")]])
+        txt = ("<b>THEM ACC BANG SESSION</b>
+
+"
+               "Buoc 1/3: Nhap <b>ten acc</b> (vd: FOX)")
+        try: await q.edit_message_caption(caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except:
+            try: await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+            except: await q.message.reply_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+    else:
+        await u.message.reply_text("<b>THEM ACC BANG SESSION</b>
+
+Buoc 1/3: Nhap <b>ten acc</b> (vd: FOX)", parse_mode=ParseMode.HTML)
+    return AS_NAME
+
+
+async def addsess_name(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    n = (u.message.text or "").strip()
+    try: await u.message.delete()
+    except: pass
+    if not n or not re.match(r"^[A-Za-z0-9_]{1,20}$", n):
+        await u.message.reply_text("Ten chi gom chu/so/gach duoi, 1-20 ky tu. Nhap lai hoac /cancel:")
+        return AS_NAME
+    if n in ACCS and not is_owner(u.effective_user.id, n):
+        await u.message.reply_text("Ten " + n + " da co nguoi dung. Nhap ten khac:")
+        return AS_NAME
+    if n in ACCS:
+        await u.message.reply_text("Ten " + n + " da co trong acc cua ban. Nhap ten khac:")
+        return AS_NAME
+    c.user_data["as_name"] = n
+    await u.message.reply_text("Buoc 2/3: Nhap <b>SDT</b> (+84, vd: +84837258569):", parse_mode=ParseMode.HTML)
+    return AS_PHONE
+
+
+async def addsess_phone(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    ph = (u.message.text or "").strip()
+    try: await u.message.delete()
+    except: pass
+    ph_clean = ph.replace(" ", "").replace("-", "")
+    if not ph_clean.startswith("+") or not ph_clean[1:].isdigit() or len(ph_clean) < 10:
+        await u.message.reply_text("SDT phai co dang +84xxxxxxxxx. Nhap lai hoac /cancel:")
+        return AS_PHONE
+    c.user_data["as_phone"] = ph_clean
+    await u.message.reply_text(
+        "Buoc 3/3: Paste <b>session string</b> vao day.
+
+"
+        "<i>Lay session: chay script get_session.py tren may tinh (login 1 lan), copy chuoi dai bat dau bang <code>1BV...</code></i>
+
+"
+        "Bot se XOA tin nay sau khi luu. Go /cancel de huy.",
+        parse_mode=ParseMode.HTML)
+    return AS_SESS
+
+
+async def addsess_sess(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    s = (u.message.text or "").strip()
+    try: await u.message.delete()
+    except: pass
+    name = c.user_data.get("as_name")
+    phone = c.user_data.get("as_phone")
+    if not name or not phone:
+        await u.message.reply_text("Phien bi mat. Go /addsession de lam lai.")
+        return ConversationHandler.END
+    if not s or len(s) < 100:
+        await u.message.reply_text("Session qua ngan (can > 100 ky tu). Nhap lai hoac /cancel:")
+        return AS_SESS
+    msg = await u.message.reply_text("Dang kiem tra session...")
+    try:
+        test = await fetch_initdata(s)
+    except Exception as e:
+        test = None
+        err = str(e)
+    if not test:
+        try: await msg.edit_text("Session khong hoat dong. Kiem tra lai session string, hoac /cancel.")
+        except: pass
+        return AS_SESS
+    ACCS[name] = {
+        "phone": phone, "session_string": s, "owner": u.effective_user.id,
+        "created": datetime.now().isoformat(),
+        "flags": {"mine": True, "claim": True, "watch": True, "box": True, "craft": True, "spin": True, "exchange": True, "upgrade": True},
+        "user": {}, "stats": {}, "cd": {},
+        "init_data": test, "init_ts": time.time(),
+    }
+    _save(ACC_FILE, ACCS)
+    c.user_data.clear()
+    await msg.edit_text("Da them acc <b>" + name + "</b>
+
+SDT: " + phone + "
+Init data: OK",
+        parse_mode=ParseMode.HTML, reply_markup=kb_main())
+    return ConversationHandler.END
+
+
+async def addsess_cancel(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    c.user_data.clear()
+    await u.message.reply_text("Da huy.")
+    return ConversationHandler.END
+
+
 async def cmd_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     cap = main_caption(); kb = kb_main()
     if GIF_URL:
@@ -569,20 +619,6 @@ async def cmd_myid(u: Update, c: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
     role = "ADMIN" if is_admin(uid) else "USER"
     await u.message.reply_text("🆔 ID: <code>" + str(uid) + "</code>\n👤 Vai trò: <b>" + role + "</b>", parse_mode=ParseMode.HTML)
-async def cb_addsess_help(u, c):
-    q = u.callback_query; await q.answer()
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Quay lại", callback_data="menu")]])
-    txt = ("🔑 <b>THÊM BẰNG SESSION</b>\n━━━━━━━━━━━━━━━━━━━\n\n"
-        "Cách này <b>khuyến nghị</b> vì Telegram chặn login OTP từ server nước ngoài.\n\n"
-        "<b>Các bước:</b>\n"
-        "1️⃣ Trên máy tính, chạy script <code>get_session.py</code>\n"
-        "2️⃣ Login Telegram 1 lần (nhập SĐT + OTP)\n"
-        "3️⃣ Copy chuỗi session string\n"
-        "4️⃣ Gõ lệnh <code>/addsession</code> trong bot này\n"
-        "5️⃣ Nhập tên → SĐT → paste session\n\n"
-        "<i>Bot tự xóa tin chứa session sau khi lưu.</i>")
-    await edit_msg(q, txt, kb)
-
 async def cb_menu(u, c):
     q = u.callback_query; await q.answer(); await edit_msg(q, main_caption(), kb_main())
 async def cb_share_help(u, c):
@@ -870,14 +906,6 @@ def main():
     app.add_handler(CommandHandler("myid", cmd_myid))
     app.add_handler(CommandHandler("addsession", addsess_start))
     app.add_handler(CommandHandler("addsession_auto", cmd_addsession_auto))
-    conv2 = ConversationHandler(
-        entry_points=[CommandHandler("addsession", addsess_start)],
-        states={AS_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, addsess_name)],
-                AS_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, addsess_phone)],
-                AS_SESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, addsess_sess)]},
-        fallbacks=[CommandHandler("cancel", addsess_cancel)])
-    app.add_handler(conv)
-    app.add_handler(conv2)
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu$"))
     app.add_handler(CallbackQueryHandler(cb_addsess_help, pattern="^addsess_help$"))
     app.add_handler(CallbackQueryHandler(cb_share_help, pattern="^share_help$"))
