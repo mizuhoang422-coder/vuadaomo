@@ -52,6 +52,13 @@ def _save(p, v):
     with _lock:
         p.write_text(json.dumps(v, indent=2, ensure_ascii=False))
 
+import os as _os_clear
+if _os_clear.environ.get('CLEAR_ACCS') == '1':
+    try:
+        if ACC_FILE.exists(): ACC_FILE.unlink()
+        print('[clear] da xoa accs.json cu')
+    except Exception as _e:
+        print('[clear] ' + str(_e))
 ACCS = _load(ACC_FILE, {})
 _rc = _load(CODE_FILE, {})
 if isinstance(_rc, list):
