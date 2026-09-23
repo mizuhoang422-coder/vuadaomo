@@ -578,8 +578,8 @@ async def cmd_addacc(u, c):
         "<code>T\u00ean\nS\u0110T\nSession_string</code>\n\n"
         "C\u00e1c acc c\u00e1ch nhau 1 d\u00f2ng tr\u1ed1ng.\n\n"
         "VD:\n"
-        "<code>FOX\n+84837258569\n1BVtsOIcBu7ViVQ...</code>\n\n"
-        "<code>A1ztus\n+84911404475\n1BVtsOIcBu5f...</code>",
+        "<code>ACC1\n+84999999999\n1BVtsOIcBu7ViVQ...</code>\n\n"
+        "<code>ACC2\n+84988888888\n1BVtsOIcBu5f...</code>",
         parse_mode=ParseMode.HTML)
 
 async def handle_doc(u, c):
