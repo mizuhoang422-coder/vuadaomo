@@ -462,7 +462,7 @@ def panel_text(n):
         "\U0001f4e6 S\u1ee9c ch\u1ee9a: <b>" + str(u.get("capacity_lvl", 0)) + "</b>\n"
         "\U0001f3ab V\u00e9: <b>" + str(u.get("tickets", 0)) + "</b>   "
         "\U0001f48e M\u1ea3nh: <b>" + str(u.get("shards", 0)) + "</b>   "
-        "\U0001f381 H\u1ed9p: <b>" + str(u.get("mystery_boxes", 0)) + "</b>\n"
+        "\U0001f381 H\u1ed9p: <b>" + str(u.get("mystery_boxes", 0)) + "</b>\n" +
         err_line +
         "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n" + st + "\n"
         "<i>\U0001f4ca " + str(s.get("claim", 0)) + " thu \u00b7 "
