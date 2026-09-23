@@ -447,6 +447,10 @@ def panel_text(n):
     except: run = False
     st = "\U0001f7e2 <b>\u0110ANG CH\u1ea0Y</b>" if run else "\U0001f534 <b>\u0110ANG D\u1eeaNG</b>"
     s = a.get("stats", {})
+    if u.get("_error"):
+        err_line = "\u26a0\ufe0f <b>L\u1ed6I:</b> " + str(u["_error"])[:100] + "\n\n"
+    else:
+        err_line = ""
     return (
         "\U0001f464 <b>" + n.upper() + "</b>\n"
         "\U0001f4f1 " + str(a.get("phone", "?")) + "\n"
@@ -459,6 +463,7 @@ def panel_text(n):
         "\U0001f3ab V\u00e9: <b>" + str(u.get("tickets", 0)) + "</b>   "
         "\U0001f48e M\u1ea3nh: <b>" + str(u.get("shards", 0)) + "</b>   "
         "\U0001f381 H\u1ed9p: <b>" + str(u.get("mystery_boxes", 0)) + "</b>\n"
+        err_line +
         "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n" + st + "\n"
         "<i>\U0001f4ca " + str(s.get("claim", 0)) + " thu \u00b7 "
         + str(s.get("watch", 0)) + " video \u00b7 "
@@ -758,8 +763,8 @@ async def cb_admin_add(u, c):
            "<code>T\u00ean\nS\u0110T\nSession_string</code>\n\n"
            "Acc c\u00e1ch nhau 1 d\u00f2ng tr\u1ed1ng.\n\n"
            "VD:\n"
-           "<code>FOX\n+84837258569\n1BVtsOIcBu7ViVQ...</code>\n\n"
-           "<code>A1ztus\n+84911404475\n1BVtsOIcBu5f...</code>")
+           "<code>ACC1\n+84999999999\n1BVtsOIcBu7ViVQ...</code>\n\n"
+           "<code>ACC2\n+84988888888\n1BVtsOIcBu5f...</code>")
     try: await q.edit_message_caption(caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
     except:
         try: await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -837,6 +842,24 @@ async def cb_panel(u, c):
         await q.answer("Kh\u00f4ng t\u00ecm th\u1ea5y", show_alert=True); return
     if not is_owner(u.effective_user.id, n):
         await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    # Fetch user data neu chua co hoac qua 30s
+    a = ACCS[n]
+    last = a.get("last_fetch", 0)
+    need = (not a.get("user")) or (time.time() - last > 30)
+    if need:
+        try:
+            r = await asyncio.to_thread(api, n, "/api/login")
+            if r and r.status_code == 200:
+                j = r.json()
+                if j.get("success"):
+                    a["user"] = j.get("user", {})
+                    a["last_fetch"] = time.time()
+                    _save(ACC_FILE, ACCS)
+                else:
+                    if not a.get("user"):
+                        a["user"] = {"_error": j.get("error") or j.get("message") or "login fail"}
+        except Exception as e:
+            print("[panel " + n + "] " + str(e))
     try: run = n in WORKERS and not WORKERS[n].done()
     except: run = False
     await edit_msg(q, panel_text(n), kb_panel(n, ACCS[n].get("flags", {}), run))
@@ -850,6 +873,18 @@ async def cb_tog(u, c):
     f = ACCS[n].setdefault("flags", {})
     f[k] = not f.get(k, False); _save(ACC_FILE, ACCS)
     await q.answer(("B\u1eacT " if f[k] else "T\u1eaeT ") + k)
+    # Fetch user neu can
+    a = ACCS[n]
+    if not a.get("user"):
+        try:
+            r = await asyncio.to_thread(api, n, "/api/login")
+            if r and r.status_code == 200:
+                j = r.json()
+                if j.get("success"):
+                    a["user"] = j.get("user", {})
+                    a["last_fetch"] = time.time()
+                    _save(ACC_FILE, ACCS)
+        except: pass
     try: run = n in WORKERS and not WORKERS[n].done()
     except: run = False
     await edit_msg(q, panel_text(n), kb_panel(n, f, run))
