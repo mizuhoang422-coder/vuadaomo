@@ -109,7 +109,7 @@ def is_owner(uid, name):
 
 def user_accs(uid):
     if is_admin(uid): return list(ACCS.keys())
-    return [n for n, a in ACCS.items() if a.get("assigned_to") == uid]
+    return [n for n, a in ACCS.items() if a.get("assigned_to") == uid or a.get("owner") == uid]
 
 def pool_accs():
     return [n for n, a in ACCS.items() if not a.get("assigned_to")]
@@ -389,16 +389,27 @@ def main_caption(uid=None):
 
 
 def kb_main(uid=None):
-    rows = [
-        [InlineKeyboardButton("\U0001f4cb  Danh s\u00e1ch acc", callback_data="panel_list")],
-        [InlineKeyboardButton("\U0001f4ca  Xem tr\u1ef1c ti\u1ebfp", callback_data="live"),
-         InlineKeyboardButton("\U0001f381  Qu\u1ea3n l\u00fd code", callback_data="code_menu")],
-        [InlineKeyboardButton("\U0001f504  L\u00e0m m\u1edbi", callback_data="rf_all")],
-        [InlineKeyboardButton("\U0001f517  Chia s\u1ebb bot", callback_data="share_help"),
-         InlineKeyboardButton("\U0001f194  ID c\u1ee7a t\u00f4i", callback_data="myid_help")],
-    ]
+    rows = []
     if uid and is_admin(uid):
-        rows.insert(1, [InlineKeyboardButton("\u2795  Th\u00eam acc (admin)", callback_data="admin_add")])
+        rows.append([InlineKeyboardButton("\U0001f4c1  Th\u00eam acc (file txt)", callback_data="admin_add")])
+    rows.append([
+        InlineKeyboardButton("\u2795  Th\u00eam acc (OTP)", callback_data="add"),
+        InlineKeyboardButton("\U0001f511  Th\u00eam acc (Session)", callback_data="add_session"),
+    ])
+    rows.append([InlineKeyboardButton("\U0001f4cb  Danh s\u00e1ch acc", callback_data="panel_list")])
+    rows.append([
+        InlineKeyboardButton("\U0001f4ca  Xem tr\u1ef1c ti\u1ebfp", callback_data="live"),
+        InlineKeyboardButton("\U0001f381  Qu\u1ea3n l\u00fd code", callback_data="code_menu"),
+    ])
+    rows.append([
+        InlineKeyboardButton("\U0001f504  L\u00e0m m\u1edbi", callback_data="rf_all"),
+        InlineKeyboardButton("\U0001f5d1  X\u00f3a acc", callback_data="del_list"),
+    ])
+    rows.append([
+        InlineKeyboardButton("\U0001f517  Chia s\u1ebb bot", callback_data="share_help"),
+        InlineKeyboardButton("\U0001f194  ID c\u1ee7a t\u00f4i", callback_data="myid_help"),
+    ])
+    if uid and is_admin(uid):
         rows.append([InlineKeyboardButton("\U0001f465  Qu\u1ea3n l\u00fd ng\u01b0\u1eddi d\u00f9ng", callback_data="users_panel")])
         rows.append([InlineKeyboardButton("\U0001f3af  G\u00e1n acc cho user", callback_data="assign_menu")])
     return InlineKeyboardMarkup(rows)
@@ -725,6 +736,27 @@ async def broadcast_flow(u, c):
         await u.message.reply_text("\u2705 G\u1eedi: " + str(sent) + " - L\u1ed7i: " + str(fail))
         return True
     return False
+
+
+
+async def cb_admin_add(u, c):
+    q = u.callback_query
+    await q.answer()
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    AS_STATE[u.effective_user.id] = {"step": "file"}
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("\U0001f519 H\u1ee7y", callback_data="menu")]])
+    txt = ("\U0001f4c1 <b>TH\u00caM ACC T\u1eea FILE</b>\n\n"
+           "G\u1eedi file .txt v\u1edbi format m\u1ed7i acc 3 d\u00f2ng:\n"
+           "<code>T\u00ean\nS\u0110T\nSession_string</code>\n\n"
+           "Acc c\u00e1ch nhau 1 d\u00f2ng tr\u1ed1ng.\n\n"
+           "VD:\n"
+           "<code>FOX\n+84837258569\n1BVtsOIcBu7ViVQ...</code>\n\n"
+           "<code>A1ztus\n+84911404475\n1BVtsOIcBu5f...</code>")
+    try: await q.edit_message_caption(caption=txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+    except:
+        try: await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except: await q.message.reply_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 async def cmd_start(u, c):
     cap = main_caption(u.effective_user.id); kb = kb_main(u.effective_user.id)
@@ -1542,6 +1574,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_assign, pattern=r"^assign:"))
     app.add_handler(CallbackQueryHandler(cb_unassign, pattern=r"^unassign:"))
     app.add_handler(CommandHandler("addacc", cmd_addacc))
+    app.add_handler(CallbackQueryHandler(cb_admin_add, pattern="^admin_add$"))
     print("[*] polling...")
     app.run_polling(drop_pending_updates=True)
 
