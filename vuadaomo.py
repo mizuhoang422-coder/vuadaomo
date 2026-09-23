@@ -66,6 +66,9 @@ WORKERS = {}
 STOP = {}
 WATCH = None
 AS_STATE = {}
+USER_META = _load(DATA_DIR / 'user_meta.json', {})
+def save_user_meta(): _save(DATA_DIR / 'user_meta.json', USER_META)
+BROADCAST_WAIT = {}
 OTP_STATE = {}
 
 _sj = os.environ.get("SESSIONS_JSON", "").strip()
@@ -98,11 +101,22 @@ def is_approved(uid):
 
 def is_owner(uid, name):
     a = ACCS.get(name, {})
-    return a.get("owner") == uid or is_admin(uid)
+    if is_admin(uid): return True
+    if a.get("owner") == uid: return True
+    if a.get("assigned_to") == uid: return True
+    return False
+
 
 def user_accs(uid):
     if is_admin(uid): return list(ACCS.keys())
-    return [n for n, a in ACCS.items() if a.get("owner") == uid]
+    return [n for n, a in ACCS.items() if a.get("assigned_to") == uid]
+
+def pool_accs():
+    return [n for n, a in ACCS.items() if not a.get("assigned_to")]
+
+def admin_accs():
+    return [n for n, a in ACCS.items() if a.get("owner") in ADMINS]
+
 
 def save_approved():
     _save(APPR_FILE, list(APPROVED))
@@ -349,44 +363,46 @@ async def scan_history(limit=800):
         try: await client.disconnect()
         except: pass
     return found
-def main_caption():
-    nn = len(ACCS); on = 0
-    for w in WORKERS.values():
+def main_caption(uid=None):
+    names = user_accs(uid) if uid else list(ACCS.keys())
+    nn = len(names); on = 0
+    for nm in names:
+        w = WORKERS.get(nm)
         try:
-            if not w.done(): on += 1
+            if w and not w.done(): on += 1
         except: pass
     try: wr = "\u0110ANG B\u1eacT" if (WATCH and not WATCH.done()) else "\u0110ANG T\u1eaeT"
     except: wr = "\u0110ANG T\u1eaeT"
+    code_cnt = sum(1 for c_, accs in REDEEMED.items() if any(n in accs for n in names))
     return (
         "<b>\U0001f525 A1ZTUS BYPASS</b>\n"
-        "<i>\u26a1 Trung t\u00e2m \u0111i\u1ec1u khi\u1ec3n Vua D\u1ea7u M\u1ecf</i>\n"
+        "<i>\u26a1 Trung t\u00e2m \u0111i\u1ec1u khi\u1ec3n</i>\n"
         "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
         "<b>\U0001f4ca T\u1ed4NG QUAN</b>\n"
         "\U0001f465 T\u00e0i kho\u1ea3n: <b>" + str(nn) + "</b>\n"
         "\u25b6\ufe0f \u0110ang farm: <b>" + str(on) + "</b>\n"
-        "\U0001f381 Code \u0111\u00e3 d\u00f9ng: <b>" + str(len(REDEEMED)) + "</b>\n"
+        "\U0001f381 Code \u0111\u00e3 nh\u1eadn: <b>" + str(code_cnt) + "</b>\n"
         "\U0001f4e1 Theo d\u00f5i code: <b>" + wr + "</b>\n"
         "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
         "<i>\U0001f4a1 Ch\u1ecdn ch\u1ee9c n\u0103ng b\u00ean d\u01b0\u1edbi</i>"
     )
 
+
 def kb_main(uid=None):
     rows = [
-        [InlineKeyboardButton("\u2795  Th\u00eam acc (OTP)", callback_data="add"),
-         InlineKeyboardButton("\U0001f511  Th\u00eam acc (Session)", callback_data="add_session")],
         [InlineKeyboardButton("\U0001f4cb  Danh s\u00e1ch acc", callback_data="panel_list")],
-        [InlineKeyboardButton("\u25b6\ufe0f  B\u1eadt t\u1ea5t c\u1ea3", callback_data="start_all"),
-         InlineKeyboardButton("\u23f9  T\u1eaft t\u1ea5t c\u1ea3", callback_data="stop_all")],
         [InlineKeyboardButton("\U0001f4ca  Xem tr\u1ef1c ti\u1ebfp", callback_data="live"),
          InlineKeyboardButton("\U0001f381  Qu\u1ea3n l\u00fd code", callback_data="code_menu")],
-        [InlineKeyboardButton("\U0001f504  L\u00e0m m\u1edbi t\u1ea5t c\u1ea3", callback_data="rf_all"),
-         InlineKeyboardButton("\U0001f5d1  X\u00f3a acc", callback_data="del_list")],
+        [InlineKeyboardButton("\U0001f504  L\u00e0m m\u1edbi", callback_data="rf_all")],
         [InlineKeyboardButton("\U0001f517  Chia s\u1ebb bot", callback_data="share_help"),
          InlineKeyboardButton("\U0001f194  ID c\u1ee7a t\u00f4i", callback_data="myid_help")],
     ]
     if uid and is_admin(uid):
+        rows.insert(1, [InlineKeyboardButton("\u2795  Th\u00eam acc (admin)", callback_data="admin_add")])
         rows.append([InlineKeyboardButton("\U0001f465  Qu\u1ea3n l\u00fd ng\u01b0\u1eddi d\u00f9ng", callback_data="users_panel")])
+        rows.append([InlineKeyboardButton("\U0001f3af  G\u00e1n acc cho user", callback_data="assign_menu")])
     return InlineKeyboardMarkup(rows)
+
 
 def kb_panel(n, f, run):
     def b(k, lb):
@@ -452,8 +468,266 @@ async def edit_msg(q, txt, kb):
                     parse_mode=ParseMode.HTML, reply_markup=kb)
         except: pass
 
+
+
+async def cb_assign_menu(u, c):
+    q = u.callback_query
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    await q.answer()
+    rows = []
+    for uid in list(APPROVED):
+        meta = USER_META.get(str(uid), {})
+        cnt = len([n for n, a in ACCS.items() if a.get("assigned_to") == uid])
+        rows.append([InlineKeyboardButton(
+            "\U0001f464 @" + (meta.get("username") or str(uid)) + "  (" + str(cnt) + " acc)",
+            callback_data="assign_user:" + str(uid))])
+    if not rows:
+        rows.append([InlineKeyboardButton("Ch\u01b0a c\u00f3 user duy\u1ec7t", callback_data="menu")])
+    rows.append([InlineKeyboardButton("\U0001f519 Quay l\u1ea1i", callback_data="menu")])
+    await edit_msg(q, "\U0001f3af <b>G\u00c1N ACC CHO USER</b>\n\nCh\u1ecdn user \u0111\u1ec3 g\u00e1n/thu h\u1ed3i:", InlineKeyboardMarkup(rows))
+
+async def cb_assign_user(u, c):
+    q = u.callback_query
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    await q.answer()
+    try: uid = int(q.data.split(":", 1)[1])
+    except: await q.answer("L\u1ed7i"); return
+    meta = USER_META.get(str(uid), {})
+    assigned = [n for n, a in ACCS.items() if a.get("assigned_to") == uid]
+    pool = [n for n, a in ACCS.items() if not a.get("assigned_to")]
+    txt = ("<b>G\u00c1N ACC CHO " + str(uid) + "</b>\n"
+           "@" + (meta.get("username") or "?") + "\n"
+           "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+           "\u0110\u00e3 g\u00e1n: " + str(len(assigned)) + "\n"
+           "Acc admin pool: " + str(len(pool)) + "\n\n")
+    if assigned:
+        txt += "<b>Acc \u0111ang g\u00e1n:</b>\n"
+    rows = []
+    for n in assigned:
+        rows.append([InlineKeyboardButton("\u274c Thu h\u1ed3i: " + n, callback_data="unassign:" + str(uid) + ":" + n)])
+    if pool:
+        txt += "\n<b>Ch\u1ecdn acc t\u1eeb pool \u0111\u1ec3 g\u00e1n:</b>\n"
+        for n in pool[:15]:
+            rows.append([InlineKeyboardButton("\u2795 " + n, callback_data="assign:" + str(uid) + ":" + n)])
+    rows.append([InlineKeyboardButton("\U0001f519 Quay l\u1ea1i", callback_data="assign_menu")])
+    await edit_msg(q, txt, InlineKeyboardMarkup(rows))
+
+async def cb_assign(u, c):
+    q = u.callback_query
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    parts = q.data.split(":", 2)
+    try: uid = int(parts[1])
+    except: await q.answer("L\u1ed7i"); return
+    name = parts[2]
+    if name not in ACCS: await q.answer("Kh\u00f4ng t\u00ecm th\u1ea5y acc"); return
+    ACCS[name]["assigned_to"] = uid
+    _save(ACC_FILE, ACCS)
+    await q.answer("\u0110\u00e3 g\u00e1n " + name + " cho " + str(uid), show_alert=True)
+    try: await c.bot.send_message(uid, "\U0001f3af Admin \u0111\u00e3 g\u00e1n acc <b>" + name + "</b> cho b\u1ea1n", parse_mode=ParseMode.HTML)
+    except: pass
+    await cb_assign_user(u, c)
+
+async def cb_unassign(u, c):
+    q = u.callback_query
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    parts = q.data.split(":", 2)
+    try: uid = int(parts[1])
+    except: await q.answer("L\u1ed7i"); return
+    name = parts[2]
+    if name not in ACCS: await q.answer("Kh\u00f4ng t\u00ecm th\u1ea5y acc"); return
+    ACCS[name].pop("assigned_to", None)
+    _save(ACC_FILE, ACCS)
+    await q.answer("\u0110\u00e3 thu h\u1ed3i " + name, show_alert=True)
+    await cb_assign_user(u, c)
+
+# Upload file .txt de add nhieu acc
+async def cmd_addacc(u, c):
+    if not is_admin(u.effective_user.id):
+        await u.message.reply_text("Kh\u00f4ng c\u00f3 quy\u1ec1n"); return
+    AS_STATE[u.effective_user.id] = {"step": "file"}
+    await u.message.reply_text(
+        "\U0001f4c1 <b>TH\u00caM ACC T\u1eea FILE</b>\n\n"
+        "G\u1eedi file .txt v\u1edbi format m\u1ed7i acc 3 d\u00f2ng:\n"
+        "<code>T\u00ean\nS\u0110T\nSession_string</code>\n\n"
+        "C\u00e1c acc c\u00e1ch nhau 1 d\u00f2ng tr\u1ed1ng.\n\n"
+        "VD:\n"
+        "<code>FOX\n+84837258569\n1BVtsOIcBu7ViVQ...</code>\n\n"
+        "<code>A1ztus\n+84911404475\n1BVtsOIcBu5f...</code>",
+        parse_mode=ParseMode.HTML)
+
+async def handle_doc(u, c):
+    uid = u.effective_user.id
+    if not is_admin(uid): return
+    st = AS_STATE.get(uid)
+    if not st or st.get("step") != "file":
+        return
+    try: await u.message.delete()
+    except: pass
+    doc = u.message.document
+    if not doc.file_name.lower().endswith(".txt"):
+        await u.message.reply_text("Ch\u1ec9 nh\u1eadn file .txt"); return
+    m = await u.message.reply_text("\u0110ang t\u1ea3i file...")
+    try:
+        f = await doc.get_file()
+        data = await f.download_as_bytearray()
+        text = data.decode("utf-8")
+    except Exception as e:
+        await m.edit_text("\u2717 Kh\u00f4ng \u0111\u1ecdc \u0111\u01b0\u1ee3c file: " + str(e)); return
+
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
+    added = 0; failed = 0; details = []
+    for b in blocks:
+        lines = [l.strip() for l in b.split("\n") if l.strip()]
+        if len(lines) < 3:
+            failed += 1; details.append("\u2717 Block thi\u1ebfu d\u00f2ng"); continue
+        name = lines[0]
+        phone = lines[1]
+        sess = lines[2]
+        if not re.match(r"^[A-Za-z0-9_]{1,20}$", name):
+            failed += 1; details.append("\u2717 " + name + ": t\u00ean sai"); continue
+        if name in ACCS:
+            failed += 1; details.append("\u2717 " + name + ": \u0111\u00e3 t\u1ed3n t\u1ea1i"); continue
+        try:
+            test = await fetch_initdata(sess)
+        except Exception as e:
+            failed += 1; details.append("\u2717 " + name + ": session l\u1ed7i"); continue
+        if not test:
+            failed += 1; details.append("\u2717 " + name + ": session kh\u00f4ng ho\u1ea1t \u0111\u1ed9ng"); continue
+        ACCS[name] = {
+            "phone": phone, "session_string": sess, "owner": uid,
+            "created": datetime.now().isoformat(),
+            "flags": {"mine": False, "claim": False, "watch": False, "box": False,
+                      "craft": False, "spin": False, "exchange": False, "upgrade": False},
+            "user": {}, "stats": {}, "cd": {},
+            "init_data": test, "init_ts": time.time(),
+        }
+        added += 1
+        details.append("\u2713 " + name)
+    _save(ACC_FILE, ACCS)
+    AS_STATE.pop(uid, None)
+    out = "\U0001f4c1 <b>K\u1ebeT QU\u1ea2 TH\u00caM FILE</b>\n"
+    out += "Th\u00eam: <b>" + str(added) + "</b>\n"
+    out += "L\u1ed7i: <b>" + str(failed) + "</b>\n\n"
+    out += "\n".join(details[:20])
+    await m.edit_text(out, parse_mode=ParseMode.HTML, reply_markup=kb_main(uid))
+
+
+
+async def cb_kick_user(u, c):
+    q = u.callback_query
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    try: uid = int(q.data.split(":", 1)[1])
+    except: await q.answer("L\u1ed7i"); return
+    APPROVED.discard(uid); save_approved()
+    USER_META.setdefault(str(uid), {})["kicked"] = True
+    save_user_meta()
+    await q.answer("\u0110\u00e3 kick", show_alert=True)
+    try: await c.bot.send_message(uid, "\U0001f6ab B\u1ea1n \u0111\u00e3 b\u1ecb kick kh\u1ecfi bot.")
+    except: pass
+
+async def cb_user_detail(u, c):
+    q = u.callback_query
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    await q.answer()
+    try: uid = int(q.data.split(":", 1)[1])
+    except: await q.answer("L\u1ed7i"); return
+    names = [n for n, a in ACCS.items() if a.get("assigned_to") == uid or a.get("owner") == uid]
+    meta = USER_META.get(str(uid), {})
+    txt = ("<b>\U0001f464 TH\u00d4NG TIN USER</b>\n"
+           "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+           "ID: <code>" + str(uid) + "</code>\n"
+           "Username: @" + str(meta.get("username") or "?") + "\n"
+           "T\u00ean: " + str(meta.get("first_name") or "?") + "\n"
+           "Ng\u00e0y tham gia: " + str(meta.get("first_seen") or "?") + "\n"
+           "Min ng\u00e0y: " + str(meta.get("min_days") or 0) + "\n"
+           "B\u1ecb kick: " + ("C\u00f3" if meta.get("kicked") else "Kh\u00f4ng") + "\n"
+           "S\u1ed1 acc g\u00e1n: <b>" + str(len(names)) + "</b>\n")
+    if names:
+        txt += "\n<i>" + ", ".join(names[:15]) + "</i>"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("\U0001f4e9 G\u1eedi tin", callback_data="msg_user:" + str(uid))],
+        [InlineKeyboardButton("\u23f1 \u0110\u1eb7t min ng\u00e0y", callback_data="set_min:" + str(uid))],
+        [InlineKeyboardButton("\U0001f3af G\u00e1n acc", callback_data="assign_user:" + str(uid))],
+        [InlineKeyboardButton("\U0001f6ab Kick", callback_data="kick:" + str(uid)),
+         InlineKeyboardButton("\U0001f519 Quay l\u1ea1i", callback_data="users_panel")]])
+    await edit_msg(q, txt, kb)
+
+async def cb_msg_user(u, c):
+    q = u.callback_query
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    await q.answer()
+    try: uid = int(q.data.split(":", 1)[1])
+    except: await q.answer("L\u1ed7i"); return
+    BROADCAST_WAIT[u.effective_user.id] = {"target": uid}
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("\U0001f519 H\u1ee7y", callback_data="users_panel")]])
+    await edit_msg(q, "\U0001f4e9 Nh\u1eadp tin nh\u1eafn g\u1eedi user " + str(uid), kb)
+
+async def cb_set_min(u, c):
+    q = u.callback_query
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    await q.answer()
+    try: uid = int(q.data.split(":", 1)[1])
+    except: await q.answer("L\u1ed7i"); return
+    BROADCAST_WAIT[u.effective_user.id] = {"set_min": uid}
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("\U0001f519 H\u1ee7y", callback_data="users_panel")]])
+    await edit_msg(q, "\u23f1 Nh\u1eadp s\u1ed1 ng\u00e0y t\u1ed1i thi\u1ec3u (0 = b\u1ecf gi\u1edbi h\u1ea1n):", kb)
+
+async def cb_broadcast_all(u, c):
+    q = u.callback_query
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    await q.answer()
+    BROADCAST_WAIT[u.effective_user.id] = {"broadcast": True}
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("\U0001f519 H\u1ee7y", callback_data="users_panel")]])
+    await edit_msg(q, "\U0001f4e2 Nh\u1eadp tin nh\u1eafn broadcast \u0111\u1ebfn t\u1ea5t c\u1ea3 user \u0111\u00e3 duy\u1ec7t:", kb)
+
+async def _send_broadcast(c, target, text):
+    try:
+        await c.bot.send_message(target, "\U0001f4e9 <b>Th\u00f4ng b\u00e1o t\u1eeb admin:</b>\n\n" + text, parse_mode=ParseMode.HTML)
+        return True
+    except: return False
+
+async def broadcast_flow(u, c):
+    uid = u.effective_user.id
+    st = BROADCAST_WAIT.get(uid)
+    if not st: return False
+    txt = (u.message.text or "").strip()
+    try: await u.message.delete()
+    except: pass
+    if "target" in st:
+        okk = await _send_broadcast(c, st["target"], txt)
+        BROADCAST_WAIT.pop(uid, None)
+        await u.message.reply_text("\u2705 \u0110\u00e3 g\u1eedi" if okk else "\u2717 G\u1eedi th\u1ea5t b\u1ea1i")
+        return True
+    if "set_min" in st:
+        try: n = int(txt)
+        except: await u.message.reply_text("S\u1ed1 nguy\u00ean. Nh\u1eadp l\u1ea1i:"); return True
+        tgt = st["set_min"]
+        USER_META.setdefault(str(tgt), {})["min_days"] = n
+        save_user_meta()
+        BROADCAST_WAIT.pop(uid, None)
+        await u.message.reply_text("\u2705 \u0110\u00e3 \u0111\u1eb7t min " + str(n) + " ng\u00e0y")
+        return True
+    if st.get("broadcast"):
+        sent = 0; fail = 0
+        for a in list(APPROVED):
+            if await _send_broadcast(c, a, txt): sent += 1
+            else: fail += 1
+        BROADCAST_WAIT.pop(uid, None)
+        await u.message.reply_text("\u2705 G\u1eedi: " + str(sent) + " - L\u1ed7i: " + str(fail))
+        return True
+    return False
+
 async def cmd_start(u, c):
-    cap = main_caption(); kb = kb_main(u.effective_user.id)
+    cap = main_caption(u.effective_user.id); kb = kb_main(u.effective_user.id)
     if GIF_URL:
         try:
             await u.message.reply_animation(GIF_URL, caption=cap, parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -475,7 +749,7 @@ async def cmd_myid(u, c):
 
 async def cb_menu(u, c):
     q = u.callback_query; await q.answer()
-    await edit_msg(q, main_caption(), kb_main(u.effective_user.id))
+    await edit_msg(q, main_caption(u.effective_user.id), kb_main(u.effective_user.id))
 
 async def cb_share_help(u, c):
     q = u.callback_query; await q.answer()
@@ -508,15 +782,10 @@ async def cb_panel(u, c):
         await q.answer("Kh\u00f4ng t\u00ecm th\u1ea5y", show_alert=True); return
     if not is_owner(u.effective_user.id, n):
         await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
-    r = await asyncio.to_thread(api, n, "/api/login")
-    if r and r.status_code == 200:
-        try:
-            ACCS[n]["user"] = r.json().get("user", {})
-            _save(ACC_FILE, ACCS)
-        except: pass
     try: run = n in WORKERS and not WORKERS[n].done()
     except: run = False
     await edit_msg(q, panel_text(n), kb_panel(n, ACCS[n].get("flags", {}), run))
+
 
 async def cb_tog(u, c):
     q = u.callback_query
@@ -526,7 +795,10 @@ async def cb_tog(u, c):
     f = ACCS[n].setdefault("flags", {})
     f[k] = not f.get(k, False); _save(ACC_FILE, ACCS)
     await q.answer(("B\u1eacT " if f[k] else "T\u1eaeT ") + k)
-    await cb_panel(u, c)
+    try: run = n in WORKERS and not WORKERS[n].done()
+    except: run = False
+    await edit_msg(q, panel_text(n), kb_panel(n, f, run))
+
 
 async def cb_start_acc(u, c):
     q = u.callback_query; n = q.data.split(":", 1)[1]
@@ -862,6 +1134,11 @@ async def cb_appr_ok(u, c):
     try: uid = int(q.data.split(":", 1)[1])
     except: await q.answer("L\u1ed7i"); return
     APPROVED.add(uid); save_approved()
+    if str(uid) not in USER_META:
+        info = PENDING_USERS.get(uid, {})
+        USER_META[str(uid)] = {"first_seen": datetime.now().isoformat(),
+            "username": info.get("username", ""), "first_name": info.get("first_name", "")}
+        save_user_meta()
     await q.answer("\u0110\u00e3 duy\u1ec7t")
     try: await q.edit_message_text("\u2705 \u0110\u00e3 DUY\u1ec6T user " + str(uid))
     except: pass
@@ -909,19 +1186,43 @@ async def cb_users_panel(u, c):
         await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
     await q.answer()
     pending = [uid for uid in PENDING_USERS if uid not in APPROVED]
+    approved_list = list(APPROVED)
     txt = ("<b>\U0001f465 QU\u1ea2N L\u00dd NG\u01af\u1edcI D\u00d9NG</b>\n"
            "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-           "\u0110\u00e3 duy\u1ec7t: <b>" + str(len(APPROVED)) + "</b>\n"
-           "Ch\u1edd duy\u1ec7t: <b>" + str(len(pending)) + "</b>\n")
+           "\u0110\u00e3 duy\u1ec7t: <b>" + str(len(approved_list)) + "</b>\n"
+           "Ch\u1edd duy\u1ec7t: <b>" + str(len(pending)) + "</b>\n\n"
+           "<i>B\u1ea5m v\u00e0o user \u0111\u1ec3 xem chi ti\u1ebft</i>")
+    rows = []
+    for uid in approved_list[:15]:
+        meta = USER_META.get(str(uid), {})
+        cnt = len([n for n, a in ACCS.items() if a.get("assigned_to") == uid or a.get("owner") == uid])
+        rows.append([InlineKeyboardButton(
+            "\U0001f464 @" + (meta.get("username") or str(uid)) + "  (" + str(cnt) + " acc)",
+            callback_data="udetail:" + str(uid))])
     if pending:
-        txt += "\n<b>Danh s\u00e1ch ch\u1edd:</b>\n"
-        for uid in pending[:20]:
-            info = PENDING_USERS[uid]
-            txt += "<code>" + str(uid) + "</code>  @" + (info.get("username") or "?") + "\n"
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("\u2705 Duy\u1ec7t t\u1ea5t c\u1ea3", callback_data="appr_all")],
-        [InlineKeyboardButton("\U0001f519 Quay l\u1ea1i", callback_data="menu")]])
-    await edit_msg(q, txt, kb)
+        rows.append([InlineKeyboardButton("\U0001f514 " + str(len(pending)) + " user ch\u1edd duy\u1ec7t", callback_data="pending_list")])
+    rows.append([InlineKeyboardButton("\U0001f4e2 Broadcast t\u1ea5t c\u1ea3", callback_data="broadcast_all")])
+    rows.append([InlineKeyboardButton("\U0001f519 Quay l\u1ea1i", callback_data="menu")])
+    await edit_msg(q, txt, InlineKeyboardMarkup(rows))
+
+async def cb_pending_list(u, c):
+    q = u.callback_query
+    if not is_admin(u.effective_user.id):
+        await q.answer("Kh\u00f4ng c\u00f3 quy\u1ec1n", show_alert=True); return
+    await q.answer()
+    pending = [uid for uid in PENDING_USERS if uid not in APPROVED]
+    if not pending:
+        await edit_msg(q, "Kh\u00f4ng c\u00f3 user ch\u1edd duy\u1ec7t", InlineKeyboardMarkup([[InlineKeyboardButton("\U0001f519 Quay l\u1ea1i", callback_data="users_panel")]])); return
+    rows = []
+    for uid in pending[:20]:
+        info = PENDING_USERS[uid]
+        rows.append([
+            InlineKeyboardButton("\u2705 " + str(uid) + " @" + (info.get("username") or "?"), callback_data="appr_ok:" + str(uid)),
+            InlineKeyboardButton("\u274c", callback_data="appr_no:" + str(uid))])
+    rows.append([InlineKeyboardButton("\u2705 Duy\u1ec7t t\u1ea5t c\u1ea3", callback_data="appr_all")])
+    rows.append([InlineKeyboardButton("\U0001f519 Quay l\u1ea1i", callback_data="users_panel")])
+    await edit_msg(q, "\U0001f514 <b>" + str(len(pending)) + " user ch\u1edd duy\u1ec7t</b>", InlineKeyboardMarkup(rows))
+
 
 async def cb_appr_all(u, c):
     q = u.callback_query
@@ -1032,6 +1333,8 @@ async def handle_text(u, c):
         if await add_session_flow(u, c): return
     if u.effective_user.id in OTP_STATE:
         if await otp_flow(u, c): return
+    if u.effective_user.id in BROADCAST_WAIT:
+        if await broadcast_flow(u, c): return
     n = WD_WAIT.pop(u.effective_user.id, None)
     if not n:
         return
@@ -1221,7 +1524,24 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_appr_no, pattern=r"^appr_no:"))
     app.add_handler(CallbackQueryHandler(cb_add_session, pattern="^add_session$"))
     app.add_handler(CallbackQueryHandler(cb_add_start, pattern="^add$"))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CommandHandler("addacc", cmd_addacc))
+    app.add_handler(CallbackQueryHandler(cb_assign_menu, pattern="^assign_menu$"))
+    app.add_handler(CallbackQueryHandler(cb_assign_user, pattern=r"^assign_user:"))
+    app.add_handler(CallbackQueryHandler(cb_assign, pattern=r"^assign:"))
+    app.add_handler(CallbackQueryHandler(cb_unassign, pattern=r"^unassign:"))
+    app.add_handler(CallbackQueryHandler(cb_kick_user, pattern=r"^kick:"))
+    app.add_handler(CallbackQueryHandler(cb_user_detail, pattern=r"^udetail:"))
+    app.add_handler(CallbackQueryHandler(cb_msg_user, pattern=r"^msg_user:"))
+    app.add_handler(CallbackQueryHandler(cb_set_min, pattern=r"^set_min:"))
+    app.add_handler(CallbackQueryHandler(cb_broadcast_all, pattern="^broadcast_all$"))
+    app.add_handler(CallbackQueryHandler(cb_pending_list, pattern="^pending_list$"))
+    app.add_handler(CallbackQueryHandler(cb_assign_menu, pattern="^assign_menu$"))
+    app.add_handler(CallbackQueryHandler(cb_assign_user, pattern=r"^assign_user:"))
+    app.add_handler(CallbackQueryHandler(cb_assign, pattern=r"^assign:"))
+    app.add_handler(CallbackQueryHandler(cb_unassign, pattern=r"^unassign:"))
+    app.add_handler(CommandHandler("addacc", cmd_addacc))
     print("[*] polling...")
     app.run_polling(drop_pending_updates=True)
 
