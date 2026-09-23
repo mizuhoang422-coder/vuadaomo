@@ -765,6 +765,22 @@ async def cb_admin_add(u, c):
         try: await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
         except: await q.message.reply_text(txt, parse_mode=ParseMode.HTML, reply_markup=kb)
 
+
+
+async def cmd_wipe(u, c):
+    if not is_admin(u.effective_user.id):
+        await u.message.reply_text("Kh\u00f4ng c\u00f3 quy\u1ec1n"); return
+    for n in list(WORKERS.keys()):
+        try: stop_farm(n)
+        except: pass
+    ACCS.clear()
+    try: _save(ACC_FILE, ACCS)
+    except: pass
+    await u.message.reply_text(
+        "\U0001f9f9 \u0110\u00e3 x\u00f3a s\u1ea1ch <b>" + str(len(ACCS)) + "</b> acc trong runtime.\n"
+        "B\u1ea5m /start \u0111\u1ec3 xem l\u1ea1i.",
+        parse_mode=ParseMode.HTML)
+
 async def cmd_start(u, c):
     cap = main_caption(u.effective_user.id); kb = kb_main(u.effective_user.id)
     if GIF_URL:
@@ -1582,6 +1598,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_unassign, pattern=r"^unassign:"))
     app.add_handler(CommandHandler("addacc", cmd_addacc))
     app.add_handler(CallbackQueryHandler(cb_admin_add, pattern="^admin_add$"))
+    app.add_handler(CommandHandler("wipe", cmd_wipe))
     print("[*] polling...")
     app.run_polling(drop_pending_updates=True)
 
